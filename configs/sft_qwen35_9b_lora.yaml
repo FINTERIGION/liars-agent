@@ -1,0 +1,42 @@
+# Qwen3.5-9B LoRA 监督微调与续玩筛选实验配置 (Tinker Training & Sampling Config)
+experiment_name: "qwen35_9b_liars_bar_lora_v1"
+base_model: "Qwen/Qwen3.5-9B"
+platform: "tinker"
+
+dataset:
+  total_target_samples: 10000
+  rollout_trajectories_per_state: 8
+  min_advantage_margin: 0.05
+  split_by: "game_id"
+  train_ratio: 0.8
+  val_ratio: 0.1
+  test_ratio: 0.1
+  history_ablation_augmentation_ratio: 0.20
+
+lora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+training:
+  batch_size: 32
+  micro_batch_size: 4
+  learning_rate: 2.0e-4
+  num_epochs: 3
+  warmup_ratio: 0.05
+  max_seq_length: 1024
+  seed: 42
+
+sampling:
+  temperature: 0.2
+  top_p: 0.9
+  max_new_tokens: 96
+  fallback_strategy: "card_counter_safe"

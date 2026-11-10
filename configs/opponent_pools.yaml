@@ -1,0 +1,46 @@
+# 对手池配置：区分训练可见对手池 (Seen Pool) 与未见测试对手池 (Unseen Holdout Pool)
+seen_pool:
+  description: "用于生成 SFT 训练数据及主实验固定对手池评测的 3 类基础策略"
+  agents:
+    - id: "honest_conservative"
+      class: "HonestConservativeBot"
+      params:
+        bluff_prob_when_forced: 0.15
+        challenge_threshold: 0.25
+    - id: "aggressive_bluffer"
+      class: "AggressiveBlufferBot"
+      params:
+        bluff_rate: 0.65
+        multi_card_bias: 0.55
+        challenge_threshold: 0.15
+    - id: "card_counter"
+      class: "CardCounterBot"
+      params:
+        risk_aversion: 1.0
+        posterior_challenge_cutoff: 0.32
+
+unseen_pool:
+  description: "用于泛化能力测试的未见对手池（多疑猎手型 + 变色龙自适应型）"
+  agents:
+    - id: "paranoid_hunter"
+      class: "ParanoidHunterBot"
+      params:
+        multi_claim_challenge_prob: 0.75
+        single_claim_challenge_prob: 0.30
+    - id: "chameleon_adaptive"
+      class: "ChameleonAdaptiveBot"
+      params:
+        high_risk_shots_threshold: 2
+        early_round_honesty_ rounds: 1
+        low_risk_bluff_rate: 0.70
+        high_risk_bluff_rate: 0.10
+
+default_matchups:
+  seen_lineup:
+    - "honest_conservative"
+    - "aggressive_bluffer"
+    - "card_counter"
+  unseen_lineup:
+    - "paranoid_hunter"
+    - "chameleon_adaptive"
+    - "card_counter"

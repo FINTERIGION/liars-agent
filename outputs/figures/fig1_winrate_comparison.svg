@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 460" width="860" height="460" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #ffffff;">
+  <title>图1：固定对手池与未见对手池整局胜率及 95% CI 对照</title>
+  <rect width="860" height="460" fill="#ffffff" rx="8"/>
+  <text x="430" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1e293b">图1：固定对手池与未见对手池整局胜率及 95% CI 对照</text>
+  <line x1="90" y1="370" x2="810" y2="370" stroke="#334155" stroke-width="1.5"/>
+  <line x1="90" y1="70" x2="90" y2="370" stroke="#334155" stroke-width="1.5"/>
+  <line x1="90" y1="370" x2="810" y2="370" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="374" text-anchor="end" font-size="12" fill="#475569">0%</text>
+  <line x1="90" y1="310" x2="810" y2="310" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="314" text-anchor="end" font-size="12" fill="#475569">10%</text>
+  <line x1="90" y1="250" x2="810" y2="250" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="254" text-anchor="end" font-size="12" fill="#475569">20%</text>
+  <line x1="90" y1="220" x2="810" y2="220" stroke="#94a3b8" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="80" y="224" text-anchor="end" font-size="12" fill="#475569">25% (随机均线)</text>
+  <line x1="90" y1="190" x2="810" y2="190" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="194" text-anchor="end" font-size="12" fill="#475569">30%</text>
+  <line x1="90" y1="130" x2="810" y2="130" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="134" text-anchor="end" font-size="12" fill="#475569">40%</text>
+  <line x1="90" y1="70" x2="810" y2="70" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="74" text-anchor="end" font-size="12" fill="#475569">50%</text>
+  <rect x="560" y="52" width="14" height="14" fill="#2563eb" rx="2"/>
+  <text x="580" y="64" font-size="13" fill="#1e293b">固定训练对手池 (Seen Pool)</text>
+  <rect x="560" y="74" width="14" height="14" fill="#0d9488" rx="2"/>
+  <text x="580" y="86" font-size="13" fill="#1e293b">未见测试对手池 (Unseen Pool)</text>
+  <rect x="121" y="344" width="38" height="26" fill="#2563eb" rx="3" opacity="0.9"/>
+  <line x1="140" y1="325" x2="140" y2="363" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="134" y1="325" x2="146" y2="325" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="134" y1="363" x2="146" y2="363" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="140" y="319" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">4.4%</text>
+  <rect x="165" y="359" width="38" height="11" fill="#0d9488" rx="3" opacity="0.9"/>
+  <line x1="184" y1="339" x2="184" y2="370" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="178" y1="339" x2="190" y2="339" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="178" y1="370" x2="190" y2="370" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="184" y="333" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">1.9%</text>
+  <text x="162" y="396" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Zero-Shot (9B)</text>
+  <rect x="265" y="115" width="38" height="255" fill="#2563eb" rx="3" opacity="0.9"/>
+  <line x1="284" y1="96" x2="284" y2="135" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="278" y1="96" x2="290" y2="96" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="278" y1="135" x2="290" y2="135" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="284" y="90" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">42.5%</text>
+  <rect x="309" y="70" width="38" height="300" fill="#0d9488" rx="3" opacity="0.9"/>
+  <line x1="328" y1="70" x2="328" y2="91" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="322" y1="70" x2="334" y2="70" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="322" y1="91" x2="334" y2="91" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="328" y="64" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">50.0%</text>
+  <text x="306" y="396" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Small Classifier</text>
+  <rect x="409" y="108" width="38" height="262" fill="#2563eb" rx="3" opacity="0.9"/>
+  <line x1="428" y1="89" x2="428" y2="127" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="422" y1="89" x2="434" y2="89" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="422" y1="127" x2="434" y2="127" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="428" y="83" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">43.8%</text>
+  <rect x="453" y="153" width="38" height="217" fill="#0d9488" rx="3" opacity="0.9"/>
+  <line x1="472" y1="133" x2="472" y2="173" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="466" y1="133" x2="478" y2="133" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="466" y1="173" x2="478" y2="173" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="472" y="127" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">36.2%</text>
+  <text x="450" y="396" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Rule CardCounter</text>
+  <rect x="553" y="198" width="38" height="172" fill="#2563eb" rx="3" opacity="0.9"/>
+  <line x1="572" y1="179" x2="572" y2="217" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="566" y1="179" x2="578" y2="179" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="566" y1="217" x2="578" y2="217" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="572" y="173" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">28.7%</text>
+  <rect x="597" y="70" width="38" height="300" fill="#0d9488" rx="3" opacity="0.9"/>
+  <line x1="616" y1="70" x2="616" y2="91" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="610" y1="70" x2="622" y2="70" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="610" y1="91" x2="622" y2="91" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="616" y="64" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">50.0%</text>
+  <text x="594" y="396" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">LoRA-SFT (9B)</text>
+  <rect x="697" y="134" width="38" height="236" fill="#2563eb" rx="3" opacity="0.9"/>
+  <line x1="716" y1="115" x2="716" y2="153" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="710" y1="115" x2="722" y2="115" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="710" y1="153" x2="722" y2="153" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="716" y="109" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">39.4%</text>
+  <rect x="741" y="70" width="38" height="300" fill="#0d9488" rx="3" opacity="0.9"/>
+  <line x1="760" y1="70" x2="760" y2="91" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="754" y1="70" x2="766" y2="70" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="754" y1="91" x2="766" y2="91" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="760" y="64" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">50.0%</text>
+  <text x="738" y="396" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">LoRA-RS (Rollout+)</text>
+</svg>

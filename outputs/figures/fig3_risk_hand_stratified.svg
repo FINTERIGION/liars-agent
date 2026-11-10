@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 460" width="840" height="460" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #ffffff;">
+  <title>图3：按淘汰风险与手牌真牌分层的策略诊断热力矩阵</title>
+  <rect width="840" height="460" fill="#ffffff" rx="8"/>
+  <text x="420" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1e293b">图3：按淘汰风险与手牌真牌分层的策略诊断热力矩阵</text>
+  <text x="302" y="79" text-anchor="middle" font-size="13" font-weight="700" fill="#1e293b">0张真牌(无真牌)</text>
+  <text x="487" y="79" text-anchor="middle" font-size="13" font-weight="700" fill="#1e293b">1~2张真牌(常规)</text>
+  <text x="672" y="79" text-anchor="middle" font-size="13" font-weight="700" fill="#1e293b">3+张真牌(富余)</text>
+  <text x="196" y="147" text-anchor="end" font-size="13" font-weight="700" fill="#1e293b">0枪(低风险16.7%)</text>
+  <rect x="214" y="99" width="177" height="87" fill="rgba(37, 99, 235, 0.57)" stroke="#cbd5e1" rx="6"/>
+  <text x="302" y="127" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">质疑率: 64.1%</text>
+  <text x="302" y="149" text-anchor="middle" font-size="12" fill="#1e293b">质疑命中: 57.9%</text>
+  <text x="302" y="169" text-anchor="middle" font-size="12" fill="#334155">出牌诈唬率: 100.0%</text>
+  <rect x="399" y="99" width="177" height="87" fill="rgba(37, 99, 235, 0.21)" stroke="#cbd5e1" rx="6"/>
+  <text x="487" y="127" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">质疑率: 9.5%</text>
+  <text x="487" y="149" text-anchor="middle" font-size="12" fill="#1e293b">质疑命中: 68.2%</text>
+  <text x="487" y="169" text-anchor="middle" font-size="12" fill="#334155">出牌诈唬率: 0.0%</text>
+  <rect x="584" y="99" width="177" height="87" fill="rgba(37, 99, 235, 0.21)" stroke="#cbd5e1" rx="6"/>
+  <text x="672" y="127" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">质疑率: 9.6%</text>
+  <text x="672" y="149" text-anchor="middle" font-size="12" fill="#1e293b">质疑命中: 47.4%</text>
+  <text x="672" y="169" text-anchor="middle" font-size="12" fill="#334155">出牌诈唬率: 0.0%</text>
+  <text x="196" y="242" text-anchor="end" font-size="13" font-weight="700" fill="#1e293b">1枪(中风险20.0%)</text>
+  <rect x="214" y="194" width="177" height="87" fill="rgba(37, 99, 235, 0.35)" stroke="#cbd5e1" rx="6"/>
+  <text x="302" y="222" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">质疑率: 30.6%</text>
+  <text x="302" y="244" text-anchor="middle" font-size="12" fill="#1e293b">质疑命中: 57.5%</text>
+  <text x="302" y="264" text-anchor="middle" font-size="12" fill="#334155">出牌诈唬率: 100.0%</text>
+  <rect x="399" y="194" width="177" height="87" fill="rgba(37, 99, 235, 0.2)" stroke="#cbd5e1" rx="6"/>
+  <text x="487" y="222" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">质疑率: 8.4%</text>
+  <text x="487" y="244" text-anchor="middle" font-size="12" fill="#1e293b">质疑命中: 65.4%</text>
+  <text x="487" y="264" text-anchor="middle" font-size="12" fill="#334155">出牌诈唬率: 0.0%</text>
+  <rect x="584" y="194" width="177" height="87" fill="rgba(37, 99, 235, 0.18)" stroke="#cbd5e1" rx="6"/>
+  <text x="672" y="222" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">质疑率: 4.8%</text>
+  <text x="672" y="244" text-anchor="middle" font-size="12" fill="#1e293b">质疑命中: 0.0%</text>
+  <text x="672" y="264" text-anchor="middle" font-size="12" fill="#334155">出牌诈唬率: 0.0%</text>
+  <text x="196" y="337" text-anchor="end" font-size="13" font-weight="700" fill="#1e293b">2+枪(高危>=25.0%)</text>
+  <rect x="214" y="289" width="177" height="87" fill="rgba(37, 99, 235, 0.29)" stroke="#cbd5e1" rx="6"/>
+  <text x="302" y="317" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">质疑率: 21.2%</text>
+  <text x="302" y="339" text-anchor="middle" font-size="12" fill="#1e293b">质疑命中: 61.5%</text>
+  <text x="302" y="359" text-anchor="middle" font-size="12" fill="#334155">出牌诈唬率: 100.0%</text>
+  <rect x="399" y="289" width="177" height="87" fill="rgba(37, 99, 235, 0.18)" stroke="#cbd5e1" rx="6"/>
+  <text x="487" y="317" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">质疑率: 4.4%</text>
+  <text x="487" y="339" text-anchor="middle" font-size="12" fill="#1e293b">质疑命中: 87.5%</text>
+  <text x="487" y="359" text-anchor="middle" font-size="12" fill="#334155">出牌诈唬率: 0.0%</text>
+  <rect x="584" y="289" width="177" height="87" fill="rgba(37, 99, 235, 0.16)" stroke="#cbd5e1" rx="6"/>
+  <text x="672" y="317" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">质疑率: 2.0%</text>
+  <text x="672" y="339" text-anchor="middle" font-size="12" fill="#1e293b">质疑命中: 100.0%</text>
+  <text x="672" y="359" text-anchor="middle" font-size="12" fill="#334155">出牌诈唬率: 0.0%</text>
+</svg>

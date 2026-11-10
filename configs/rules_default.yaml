@@ -1,0 +1,27 @@
+# 标准研究用骗子牌规则配置 (Standard Research Rules for Liar's Bar)
+game_name: "liars_bar_research_v1"
+num_players: 4
+hand_size: 5
+max_play_cards: 3
+min_play_cards: 1
+
+deck:
+  Q: 6
+  K: 6
+  A: 6
+  JOKER: 2  # 恶魔/万能牌，视为任意当前目标牌真牌
+
+target_ranks:
+  - "Q"
+  - "K"
+  - "A"
+
+revolver:
+  chambers: 6
+  fatal_bullets: 1
+
+boundary_rules:
+  # 当除上家外其余所有存活玩家手牌均为空，或场上仅剩2人且上家打空手牌时，下家强制质疑
+  force_challenge_when_others_empty: true
+  force_challenge_on_two_player_empty_hand: true
+  max_steps_per_round: 60

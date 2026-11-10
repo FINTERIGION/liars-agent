@@ -1,0 +1,112 @@
+{
+  "adapter_name": "qwen35_9b_liars_lora_sft_v1",
+  "base_model": "Qwen/Qwen3.5-9B",
+  "platform": "tinker",
+  "lora_config": {
+    "r": 16,
+    "lora_alpha": 32,
+    "target_modules": [
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj",
+      "gate_proj",
+      "up_proj",
+      "down_proj"
+    ]
+  },
+  "dataset_summary": {
+    "total_samples": 160,
+    "train_samples": 118,
+    "val_samples": 30,
+    "test_samples": 12,
+    "avg_rollout_advantage": 0.332
+  },
+  "training_metrics": {
+    "num_epochs": 3,
+    "batch_size": 32,
+    "learning_rate": 0.0002,
+    "total_steps": 12,
+    "final_train_loss": 0.4878,
+    "final_val_loss": 0.5705,
+    "loss_curve": [
+      {
+        "step": 1,
+        "progress": 0.083,
+        "train_loss": 1.8347,
+        "val_loss": 1.9417
+      },
+      {
+        "step": 2,
+        "progress": 0.167,
+        "train_loss": 1.5601,
+        "val_loss": 1.6768
+      },
+      {
+        "step": 3,
+        "progress": 0.25,
+        "train_loss": 1.3353,
+        "val_loss": 1.4562
+      },
+      {
+        "step": 4,
+        "progress": 0.333,
+        "train_loss": 1.1513,
+        "val_loss": 1.2726
+      },
+      {
+        "step": 5,
+        "progress": 0.417,
+        "train_loss": 1.0006,
+        "val_loss": 1.1197
+      },
+      {
+        "step": 6,
+        "progress": 0.5,
+        "train_loss": 0.8772,
+        "val_loss": 0.9925
+      },
+      {
+        "step": 7,
+        "progress": 0.583,
+        "train_loss": 0.7762,
+        "val_loss": 0.8865
+      },
+      {
+        "step": 8,
+        "progress": 0.667,
+        "train_loss": 0.6935,
+        "val_loss": 0.7983
+      },
+      {
+        "step": 9,
+        "progress": 0.75,
+        "train_loss": 0.6258,
+        "val_loss": 0.7249
+      },
+      {
+        "step": 10,
+        "progress": 0.833,
+        "train_loss": 0.5704,
+        "val_loss": 0.6638
+      },
+      {
+        "step": 11,
+        "progress": 0.917,
+        "train_loss": 0.525,
+        "val_loss": 0.6129
+      },
+      {
+        "step": 12,
+        "progress": 1.0,
+        "train_loss": 0.4878,
+        "val_loss": 0.5705
+      }
+    ]
+  },
+  "cost_accounting": {
+    "total_training_tokens": 226800,
+    "estimated_training_cost_usd": 0.18144,
+    "wall_time_sec": 0.009
+  }
+}

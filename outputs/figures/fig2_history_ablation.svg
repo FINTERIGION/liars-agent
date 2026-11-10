@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 440" width="820" height="440" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #ffffff;">
+  <title>图2：历史信息消融对照（整局胜率与质疑命中率）</title>
+  <rect width="820" height="440" fill="#ffffff" rx="8"/>
+  <text x="410" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1e293b">图2：历史信息消融对照（整局胜率与质疑命中率）</text>
+  <line x1="90" y1="360" x2="770" y2="360" stroke="#334155" stroke-width="1.5"/>
+  <line x1="90" y1="75" x2="90" y2="360" stroke="#334155" stroke-width="1.5"/>
+  <line x1="90" y1="360" x2="770" y2="360" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="364" text-anchor="end" font-size="12" fill="#475569">0%</text>
+  <line x1="90" y1="293" x2="770" y2="293" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="297" text-anchor="end" font-size="12" fill="#475569">20%</text>
+  <line x1="90" y1="226" x2="770" y2="226" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="230" text-anchor="end" font-size="12" fill="#475569">40%</text>
+  <line x1="90" y1="159" x2="770" y2="159" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="163" text-anchor="end" font-size="12" fill="#475569">60%</text>
+  <line x1="90" y1="92" x2="770" y2="92" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="96" text-anchor="end" font-size="12" fill="#475569">80%</text>
+  <rect x="520" y="52" width="14" height="14" fill="#4f46e5" rx="2"/>
+  <text x="540" y="64" font-size="13" fill="#1e293b">整局胜率 (Win Rate)</text>
+  <rect x="520" y="74" width="14" height="14" fill="#f59e0b" rx="2"/>
+  <text x="540" y="86" font-size="13" fill="#1e293b">质疑命中率 (Challenge Precision)</text>
+  <rect x="153" y="249" width="46" height="111" fill="#4f46e5" rx="4"/>
+  <text x="176" y="241" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">33.1%</text>
+  <rect x="207" y="162" width="46" height="198" fill="#f59e0b" rx="4"/>
+  <text x="230" y="154" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">59.1%</text>
+  <text x="203" y="388" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Full History (完整跨局历史)</text>
+  <rect x="380" y="201" width="46" height="159" fill="#4f46e5" rx="4"/>
+  <text x="403" y="193" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">47.5%</text>
+  <rect x="434" y="155" width="46" height="205" fill="#f59e0b" rx="4"/>
+  <text x="457" y="147" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">61.2%</text>
+  <text x="430" y="388" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Current Round Only (仅本小局)</text>
+  <rect x="606" y="283" width="46" height="77" fill="#4f46e5" rx="4"/>
+  <text x="629" y="275" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">23.1%</text>
+  <rect x="660" y="107" width="46" height="253" fill="#f59e0b" rx="4"/>
+  <text x="683" y="99" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">75.7%</text>
+  <text x="656" y="388" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Last Action Only (无历史记忆)</text>
+</svg>

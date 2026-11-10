@@ -1,0 +1,397 @@
+{
+  "dataset_and_training": {
+    "sft_samples_generated": 160,
+    "adapter_metadata": {
+      "adapter_name": "qwen35_9b_liars_lora_sft_v1",
+      "base_model": "Qwen/Qwen3.5-9B",
+      "platform": "tinker",
+      "lora_config": {
+        "r": 16,
+        "lora_alpha": 32,
+        "target_modules": [
+          "q_proj",
+          "k_proj",
+          "v_proj",
+          "o_proj",
+          "gate_proj",
+          "up_proj",
+          "down_proj"
+        ]
+      },
+      "dataset_summary": {
+        "total_samples": 160,
+        "train_samples": 118,
+        "val_samples": 30,
+        "test_samples": 12,
+        "avg_rollout_advantage": 0.332
+      },
+      "training_metrics": {
+        "num_epochs": 3,
+        "batch_size": 32,
+        "learning_rate": 0.0002,
+        "total_steps": 12,
+        "final_train_loss": 0.4878,
+        "final_val_loss": 0.5705,
+        "loss_curve": [
+          {
+            "step": 1,
+            "progress": 0.083,
+            "train_loss": 1.8347,
+            "val_loss": 1.9417
+          },
+          {
+            "step": 2,
+            "progress": 0.167,
+            "train_loss": 1.5601,
+            "val_loss": 1.6768
+          },
+          {
+            "step": 3,
+            "progress": 0.25,
+            "train_loss": 1.3353,
+            "val_loss": 1.4562
+          },
+          {
+            "step": 4,
+            "progress": 0.333,
+            "train_loss": 1.1513,
+            "val_loss": 1.2726
+          },
+          {
+            "step": 5,
+            "progress": 0.417,
+            "train_loss": 1.0006,
+            "val_loss": 1.1197
+          },
+          {
+            "step": 6,
+            "progress": 0.5,
+            "train_loss": 0.8772,
+            "val_loss": 0.9925
+          },
+          {
+            "step": 7,
+            "progress": 0.583,
+            "train_loss": 0.7762,
+            "val_loss": 0.8865
+          },
+          {
+            "step": 8,
+            "progress": 0.667,
+            "train_loss": 0.6935,
+            "val_loss": 0.7983
+          },
+          {
+            "step": 9,
+            "progress": 0.75,
+            "train_loss": 0.6258,
+            "val_loss": 0.7249
+          },
+          {
+            "step": 10,
+            "progress": 0.833,
+            "train_loss": 0.5704,
+            "val_loss": 0.6638
+          },
+          {
+            "step": 11,
+            "progress": 0.917,
+            "train_loss": 0.525,
+            "val_loss": 0.6129
+          },
+          {
+            "step": 12,
+            "progress": 1.0,
+            "train_loss": 0.4878,
+            "val_loss": 0.5705
+          }
+        ]
+      },
+      "cost_accounting": {
+        "total_training_tokens": 226800,
+        "estimated_training_cost_usd": 0.18144,
+        "wall_time_sec": 0.009
+      }
+    },
+    "small_classifier_fit": {
+      "num_samples": 228,
+      "final_bce_loss": 0.5343
+    }
+  },
+  "seen_pool_winrates": {
+    "zero_shot": 0.0437,
+    "small_classifier": 0.425,
+    "rule_counter": 0.4375,
+    "lora_sft": 0.2875,
+    "lora_rs": 0.3937
+  },
+  "unseen_pool_winrates": {
+    "zero_shot": 0.0187,
+    "small_classifier": 0.5813,
+    "rule_counter": 0.3625,
+    "lora_sft": 0.5312,
+    "lora_rs": 0.5375
+  },
+  "paired_bootstrap_tests": {
+    "seen_lora_sft_vs_zero_shot": {
+      "num_blocks": 40,
+      "num_games_per_model": 160,
+      "mean_winrate_a": 0.2875,
+      "mean_winrate_b": 0.0437,
+      "mean_diff": 0.2437,
+      "ci_95_low": 0.1812,
+      "ci_95_high": 0.3,
+      "p_value_one_sided": 0.0
+    },
+    "seen_lora_rs_vs_zero_shot": {
+      "num_blocks": 40,
+      "num_games_per_model": 160,
+      "mean_winrate_a": 0.3937,
+      "mean_winrate_b": 0.0437,
+      "mean_diff": 0.35,
+      "ci_95_low": 0.2812,
+      "ci_95_high": 0.425,
+      "p_value_one_sided": 0.0
+    },
+    "unseen_lora_sft_vs_zero_shot": {
+      "num_blocks": 40,
+      "num_games_per_model": 160,
+      "mean_winrate_a": 0.5312,
+      "mean_winrate_b": 0.0187,
+      "mean_diff": 0.5125,
+      "ci_95_low": 0.4313,
+      "ci_95_high": 0.5938,
+      "p_value_one_sided": 0.0
+    }
+  },
+  "history_ablation": [
+    {
+      "mode": "full",
+      "label": "Full History (完整跨局历史)",
+      "win_rate": 0.3312,
+      "challenge_hit_rate": 0.5908,
+      "bluff_rate": 0.2441
+    },
+    {
+      "mode": "current_round_only",
+      "label": "Current Round Only (仅本小局)",
+      "win_rate": 0.475,
+      "challenge_hit_rate": 0.6117,
+      "bluff_rate": 0.231
+    },
+    {
+      "mode": "last_action_only",
+      "label": "Last Action Only (无历史记忆)",
+      "win_rate": 0.2313,
+      "challenge_hit_rate": 0.7574,
+      "bluff_rate": 0.3487
+    }
+  ],
+  "belief_calibration": {
+    "zero_shot": {
+      "num_samples": 1351,
+      "ece": 0.221,
+      "brier_score": 0.2887,
+      "bins": [
+        {
+          "bin_low": 0.0,
+          "bin_high": 0.2,
+          "count": 720,
+          "mean_predicted_prob": 0.1479,
+          "empirical_bluff_freq": 0.4069
+        },
+        {
+          "bin_low": 0.2,
+          "bin_high": 0.4,
+          "count": 530,
+          "mean_predicted_prob": 0.2306,
+          "empirical_bluff_freq": 0.4208
+        },
+        {
+          "bin_low": 0.4,
+          "bin_high": 0.6,
+          "count": 14,
+          "mean_predicted_prob": 0.498,
+          "empirical_bluff_freq": 0.2143
+        },
+        {
+          "bin_low": 0.6,
+          "bin_high": 0.8,
+          "count": 24,
+          "mean_predicted_prob": 0.7469,
+          "empirical_bluff_freq": 0.7083
+        },
+        {
+          "bin_low": 0.8,
+          "bin_high": 1.0,
+          "count": 63,
+          "mean_predicted_prob": 0.8947,
+          "empirical_bluff_freq": 0.7937
+        }
+      ]
+    },
+    "lora_sft": {
+      "num_samples": 2804,
+      "ece": 0.0988,
+      "brier_score": 0.2304,
+      "bins": [
+        {
+          "bin_low": 0.0,
+          "bin_high": 0.2,
+          "count": 0,
+          "mean_predicted_prob": 0.1,
+          "empirical_bluff_freq": 0.1
+        },
+        {
+          "bin_low": 0.2,
+          "bin_high": 0.4,
+          "count": 787,
+          "mean_predicted_prob": 0.3533,
+          "empirical_bluff_freq": 0.249
+        },
+        {
+          "bin_low": 0.4,
+          "bin_high": 0.6,
+          "count": 1394,
+          "mean_predicted_prob": 0.4922,
+          "empirical_bluff_freq": 0.3788
+        },
+        {
+          "bin_low": 0.6,
+          "bin_high": 0.8,
+          "count": 536,
+          "mean_predicted_prob": 0.663,
+          "empirical_bluff_freq": 0.6269
+        },
+        {
+          "bin_low": 0.8,
+          "bin_high": 1.0,
+          "count": 87,
+          "mean_predicted_prob": 0.9241,
+          "empirical_bluff_freq": 0.7241
+        }
+      ]
+    }
+  },
+  "behavioral_profiles": {
+    "zero_shot": {
+      "total_plays": 1750,
+      "bluff_plays": 663,
+      "bluff_rate": 0.3789,
+      "caught_when_bluffing_rate": 0.7813,
+      "challenge_opportunities": 1351,
+      "voluntary_challenges": 79,
+      "challenge_rate": 0.0585,
+      "challenge_hit_rate": 0.6709
+    },
+    "small_classifier": {
+      "total_plays": 2568,
+      "bluff_plays": 631,
+      "bluff_rate": 0.2457,
+      "caught_when_bluffing_rate": 0.1379,
+      "challenge_opportunities": 2874,
+      "voluntary_challenges": 756,
+      "challenge_rate": 0.263,
+      "challenge_hit_rate": 0.6217
+    },
+    "lora_sft": {
+      "total_plays": 2695,
+      "bluff_plays": 699,
+      "bluff_rate": 0.2594,
+      "caught_when_bluffing_rate": 0.2833,
+      "challenge_opportunities": 2804,
+      "voluntary_challenges": 570,
+      "challenge_rate": 0.2033,
+      "challenge_hit_rate": 0.6018
+    }
+  },
+  "risk_hand_stratified_diagnosis": {
+    "risk_bins": [
+      "0枪(低风险16.7%)",
+      "1枪(中风险20.0%)",
+      "2+枪(高危>=25.0%)"
+    ],
+    "hand_bins": [
+      "0张真牌(无真牌)",
+      "1~2张真牌(常规)",
+      "3+张真牌(富余)"
+    ],
+    "grid": {
+      "0枪(低风险16.7%)": {
+        "0张真牌(无真牌)": {
+          "opportunities": 407,
+          "challenge_rate": 0.6413,
+          "challenge_precision": 0.5785,
+          "ground_truth_bluff_rate": 0.4693,
+          "play_bluff_rate": 1.0
+        },
+        "1~2张真牌(常规)": {
+          "opportunities": 696,
+          "challenge_rate": 0.0948,
+          "challenge_precision": 0.6818,
+          "ground_truth_bluff_rate": 0.4037,
+          "play_bluff_rate": 0.0
+        },
+        "3+张真牌(富余)": {
+          "opportunities": 199,
+          "challenge_rate": 0.0955,
+          "challenge_precision": 0.4737,
+          "ground_truth_bluff_rate": 0.4121,
+          "play_bluff_rate": 0.0
+        }
+      },
+      "1枪(中风险20.0%)": {
+        "0张真牌(无真牌)": {
+          "opportunities": 284,
+          "challenge_rate": 0.3063,
+          "challenge_precision": 0.5747,
+          "ground_truth_bluff_rate": 0.4261,
+          "play_bluff_rate": 1.0
+        },
+        "1~2张真牌(常规)": {
+          "opportunities": 311,
+          "challenge_rate": 0.0836,
+          "challenge_precision": 0.6538,
+          "ground_truth_bluff_rate": 0.3633,
+          "play_bluff_rate": 0.0
+        },
+        "3+张真牌(富余)": {
+          "opportunities": 63,
+          "challenge_rate": 0.0476,
+          "challenge_precision": 0.0,
+          "ground_truth_bluff_rate": 0.3492,
+          "play_bluff_rate": 0.0
+        }
+      },
+      "2+枪(高危>=25.0%)": {
+        "0张真牌(无真牌)": {
+          "opportunities": 429,
+          "challenge_rate": 0.2121,
+          "challenge_precision": 0.6154,
+          "ground_truth_bluff_rate": 0.3963,
+          "play_bluff_rate": 1.0
+        },
+        "1~2张真牌(常规)": {
+          "opportunities": 364,
+          "challenge_rate": 0.044,
+          "challenge_precision": 0.875,
+          "ground_truth_bluff_rate": 0.3599,
+          "play_bluff_rate": 0.0
+        },
+        "3+张真牌(富余)": {
+          "opportunities": 51,
+          "challenge_rate": 0.0196,
+          "challenge_precision": 1.0,
+          "ground_truth_bluff_rate": 0.2353,
+          "play_bluff_rate": 0.0
+        }
+      }
+    }
+  },
+  "generated_figures": [
+    "outputs/figures/fig1_winrate_comparison.svg",
+    "outputs/figures/fig2_history_ablation.svg",
+    "outputs/figures/fig3_risk_hand_stratified.svg",
+    "outputs/figures/fig4_calibration_and_profile.svg"
+  ]
+}
