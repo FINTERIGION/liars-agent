@@ -87,6 +87,29 @@ class TestExperimentIntegration(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     experiment.run_pipeline(config, output, 'sft')
 
+    def test_old_training_objective_fails_before_backend(self):
+        for artifact in ('adapter_metadata.json', 'training_progress.json'):
+            with self.subTest(artifact=artifact), TemporaryDirectory() as directory:
+                output = Path(directory)
+                experiment.write_json(output / 'models/sft' / artifact, {'contract': current_contract()})
+                with patch.object(experiment, 'make_backend', side_effect=AssertionError('API')):
+                    with self.assertRaisesRegex(ValueError, 'supervision objective'):
+                        experiment.run_pipeline(small_config(), output, 'sft')
+
+    def test_pipeline_keeps_tokenizer_checks_before_preflight(self):
+        from liars_agent.training.tinker_backend import TinkerBackend
+        from test_tinker_backend import SDK, Service, Tokenizer
+        with TemporaryDirectory() as directory:
+            output = Path(directory); config = small_config()
+            config['training']['max_seq_length'] = 128
+            experiment.generate_data(config, output)
+            backend = TinkerBackend(budget_path=output / 'budget.jsonl', sdk=SDK, service_client=Service())
+            backend._tokenizer = Tokenizer()
+            with patch.object(experiment, 'make_backend', return_value=backend), \
+                    patch.object(backend, 'preflight', side_effect=AssertionError('Premature service session')):
+                with self.assertRaisesRegex(ValueError, 'exceeding max_seq_length'):
+                    experiment.run_pipeline(config, output, 'sft')
+
     def test_rs_filters_fallback_without_distilling_probability_or_rationale(self):
         config = small_config(); counts = {'select': 0, 'sample': 0}
         class TestAgent(CardCounterBot):
@@ -124,7 +147,8 @@ class TestExperimentIntegration(unittest.TestCase):
             rs = [dict(row, game_id='fresh_rs') for row in base_train]
             experiment.write_jsonl(output / 'dataset/rs_train.jsonl', rs)
             config['rs'].update(target_samples=1, belief_target_samples=1)
-            metadata = {'contract': current_contract(), 'base_model': config['base_model'], 'state_path':'tinker://test/state'}
+            metadata = {'contract': current_contract(), 'base_model': config['base_model'], 'state_path':'tinker://test/state',
+                        'action_supervision_policy': config['training']['action_supervision']}
             experiment.write_json(output / 'models/sft/adapter_metadata.json', metadata)
             with patch('liars_agent.training.tinker_train.run_tinker_lora_sft', return_value={}) as train:
                 experiment.train_model(config, output, object(), 'rs')
@@ -142,7 +166,8 @@ class TestExperimentIntegration(unittest.TestCase):
             output = Path(directory); experiment.generate_data(config, output)
             for stage in ('sft', 'rs'):
                 experiment.write_json(output / f'models/{stage}/adapter_metadata.json',
-                    {'contract':current_contract(), 'backend':'explicit_test_double'})
+                    {'contract':current_contract(), 'backend':'explicit_test_double',
+                     'action_supervision_policy': config['training']['action_supervision']})
             with patch.object(experiment, 'llm_factory', side_effect=lambda cfg,out,backend,key: lambda seed: ModelDouble(name=key,seed=seed)):
                 summary = experiment.evaluate(config, output, None, list(experiment.MODEL_LABELS))
             self.assertEqual(len(summary['history_ablation']), 3)

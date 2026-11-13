@@ -231,7 +231,7 @@ def extract_action_samples(replays, target_samples, num_rollouts=8, margin=.05, 
                 continue
             samples.append(make_action_sample(obs, best, bundle["game_id"],
                 rollout_best_value=values[best.action_id], rollout_advantage=advantage,
-                candidate_count=len(values), teacher="pool_prior_counter_continuation"))
+                candidate_count=len(values), teacher="pool_prior_counter_continuation", rollout_candidate_values=values))
             accepted += 1
     return samples
 

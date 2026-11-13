@@ -18,6 +18,7 @@ from liars_agent.contracts import current_contract
 from liars_agent.engine.state import LiarsBarEngine
 from liars_agent.training.tinker_backend import BudgetExceededError, BudgetLedger, TinkerBackend
 from liars_agent.training.tinker_train import build_sft_datum, run_tinker_lora_sft
+from liars_agent.training.action_supervision import normalize_action_policy
 
 
 class ModelInput:
@@ -75,6 +76,7 @@ class TrainingClient:
         self.batches = []
         self.optim_calls = 0
         self.val_calls = 0
+        self.validation_epoch = 0
         self.saved_samplers = []
         self.saved_states = []
 
@@ -93,7 +95,10 @@ class TrainingClient:
     def forward(self, data, loss_fn):
         # Action optimum is epoch 2, belief optimum is epoch 3.
         losses = ([.8, .3, .5], [.2, .9, .1])
-        loss = losses[self.val_calls % 2][(self.val_calls // 2) % 3]
+        belief = sum(w > 0 for w in data[0].loss_fn_inputs["weights"]) == 1
+        loss = losses[int(belief)][self.validation_epoch % 3]
+        if belief:
+            self.validation_epoch += 1
         self.val_calls += 1
         return self.output(data, loss)
 
@@ -232,7 +237,10 @@ class TestTinkerContracts(unittest.TestCase):
             for datum in batch:
                 self.assertAlmostEqual(sum(datum.loss_fn_inputs["weights"]), 1)
         self.assertEqual(result["best_epoch"], 2)
-        self.assertAlmostEqual(result["best_val_loss"], .3)
+        val_datum = build_sft_datum(splits["val"][0], self.backend, 16384)
+        answer_tokens = sum(w > 0 for w in val_datum.loss_fn_inputs["weights"])
+        self.assertAlmostEqual(result["best_val_loss"], .3 * answer_tokens)
+        self.assertAlmostEqual(result["training_metrics"]["loss_curve"][1]["val_action_canonical_token_nll"], .3)
         self.assertEqual(result["training_metrics"]["loss_curve"][1]["val_belief_loss"], .9)
         self.assertTrue(result["sampler_path"].endswith("sft-best-epoch-2"))
         self.assertTrue(result["state_path"].endswith("sft-epoch-2"))
@@ -254,7 +262,8 @@ class TestTinkerContracts(unittest.TestCase):
             run_tinker_lora_sft([], self.path / "rs", backend=self.backend, splits=self.splits(),
                 num_epochs=1, batch_size=2, resume_from=state)
         self.assertFalse(self.service.resumed)
-        metadata = {"contract": current_contract(), "base_model": self.backend.base_model, "state_path": state}
+        metadata = {"contract": current_contract(), "base_model": self.backend.base_model, "state_path": state,
+                    "action_supervision_policy": normalize_action_policy()}
         run_tinker_lora_sft([], self.path / "rs", backend=self.backend, splits=self.splits(),
                 num_epochs=1, batch_size=2, resume_from=state, resume_metadata=metadata, stage="rs")
         self.assertEqual(self.service.resumed, [(state, False)])

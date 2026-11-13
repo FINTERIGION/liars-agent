@@ -64,6 +64,8 @@ def load_config(path: str | Path) -> dict:
         for spec in config["opponents"][pool]["agents"]:
             create_rule_agent(spec["class"], name=spec["id"], **spec.get("params", {}))
     config["contract"] = current_contract()
+    from liars_agent.training.action_supervision import normalize_action_policy
+    config["training"]["action_supervision"] = normalize_action_policy(config["training"].get("action_supervision"))
     if config["dataset"].get("history_ablation_augmentation_ratio", 0) != 0:
         raise ValueError("Training history augmentation is disabled in this method version.")
     if {s["class"] for s in config["opponents"]["seen_pool"]["agents"]} != {"HonestConservativeBot", "AggressiveBlufferBot", "CardCounterBot"}:
@@ -195,20 +197,31 @@ def make_backend(config: dict, output: Path):
 
 
 def estimate_cost(config: dict, output: Path) -> dict:
-    """Real-tokenizer estimates, including balanced cycling and binary scoring."""
+    """Count actual rotated training targets and every validation candidate forward."""
     from liars_agent.training.tinker_train import build_sft_datum
+    from liars_agent.training.action_supervision import normalize_action_policy, select_action_completion, mean_action_weight
     from liars_agent.agents.prompt_builder import BELIEF_SYSTEM_PROMPT, build_bluff_user_prompt
     from liars_agent.engine.observation import PlayerObservation
     backend = make_backend(config, output)
-    lengths, counts, score_costs = {}, {}, []
+    policy = normalize_action_policy(config["training"].get("action_supervision"))
+    lengths, counts, score_costs, grouped = {}, {}, [], {}
+    token_cache = {}
     maximum = 0
+    def token_length(row, completion=None):
+        nonlocal maximum
+        key = (row["sample_id"], completion or row["completion"])
+        if key not in token_cache:
+            datum = build_sft_datum(row, backend, config["training"]["max_seq_length"],
+                                    completion_override=completion, action_supervision_policy=policy)
+            token_cache[key] = len(datum.model_input.to_ints())
+            maximum = max(maximum, token_cache[key])
+        return token_cache[key]
     for key in ("train", "val", "test"):
         lengths[key] = {"action": [], "belief": []}
+        grouped[key] = {"action": [], "belief": []}
         for row in read_jsonl(output / f"dataset/{key}.jsonl"):
-            datum = build_sft_datum(row, backend, config["training"]["max_seq_length"])
-            length = len(datum.model_input.to_ints())
-            maximum = max(maximum, length)
-            lengths[key][row["task"]].append(length)
+            grouped[key][row["task"]].append(row)
+            lengths[key][row["task"]].append(token_length(row))
             if row["task"] == "belief":
                 obs = PlayerObservation.from_dict(row["observation"])
                 prefix = backend.encode_messages([{"role": "system", "content": BELIEF_SYSTEM_PROMPT},
@@ -225,14 +238,26 @@ def estimate_cost(config: dict, output: Path) -> dict:
     training_tokens = 0
     for epoch in range(training["num_epochs"]):
         for index, task in enumerate(("action", "belief")):
-            sizes = lengths["train"][task]
-            order = list(range(len(sizes)))
+            rows = grouped["train"][task]
+            sizes = [token_length(row, select_action_completion(row, training.get("seed", config["seed"]), epoch, policy))
+                     if task == "action" else token_length(row) for row in rows]
+            order = list(range(len(rows)))
             random.Random(training.get("seed", config["seed"]) + 2 * epoch + index).shuffle(order)
             training_tokens += sum(sizes[order[i % len(order)]] for i in range(steps * half))
-    validation_tokens = sum(counts["val"].values()) * training["num_epochs"]
+    from liars_agent.training.action_validation import candidate_completion
+    validation_action_tokens = sum(token_length(row, candidate_completion(row, action["action_id"]))
+        for row in grouped["val"]["action"] for action in row["observation"]["legal_actions"])
+    validation_candidates = sum(len(row["observation"]["legal_actions"]) for row in grouped["val"]["action"])
+    validation_tokens = (validation_action_tokens + counts["val"]["belief"]) * training["num_epochs"]
     result = {"contract": current_contract(), "model": config["base_model"], "tokens_by_split_and_task": counts,
         "max_input_tokens": maximum, "balanced_training_tokens": training_tokens,
         "validation_tokens": validation_tokens,
+        "action_supervision_policy": policy,
+        "training_action_raw_weight_mean": mean_action_weight(grouped["train"]["action"], policy),
+        "validation_action_candidate_sequences_per_epoch": validation_candidates,
+        "validation_action_tokens_per_epoch": validation_action_tokens,
+        "validation_belief_tokens_per_epoch": counts["val"]["belief"],
+        "validation_cost_basis": "all legal action JSON sequences once per epoch; canonical NLL reuses that forward; no test model calls",
         "sft_train_and_validation_usd": backend.estimate_training_cost(training_tokens + validation_tokens),
         "belief_scoring_mean_usd_upper_bound_on_dataset": sum(score_costs) / len(score_costs),
         "belief_scoring_max_usd_upper_bound_on_dataset": max(score_costs),
@@ -245,10 +270,13 @@ def estimate_cost(config: dict, output: Path) -> dict:
 
 def train_model(config: dict, output: Path, backend, stage: str = "sft") -> dict:
     from liars_agent.training.tinker_train import run_tinker_lora_sft
+    from liars_agent.training.action_supervision import normalize_action_policy, require_training_objective
+    policy = normalize_action_policy(config["training"].get("action_supervision"))
     path = output / f"models/{stage}/adapter_metadata.json"
     if path.exists():
         metadata = read_json(path)
         require_contract(metadata, "model metadata")
+        require_training_objective(metadata, policy)
         return metadata
     ds_summary = read_json(output / "dataset/data_summary.json")
     require_contract(ds_summary, "dataset summary")
@@ -265,6 +293,7 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft") -> dict
             raise ValueError("RS dataset has not reached its configured target.")
         resume_metadata = read_json(output / "models/sft/adapter_metadata.json")
         require_contract(resume_metadata, "SFT resume checkpoint")
+        require_training_objective(resume_metadata, policy)
         resume_from = resume_metadata["state_path"]
     return run_tinker_lora_sft(
         samples=splits["train"] + splits["val"] + splits["test"], splits=splits, output_dir=path.parent,
@@ -276,6 +305,7 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft") -> dict
         resume=(path.parent / "training_progress.json").exists(),
         train_attn=config["lora"]["train_attn"], train_mlp=config["lora"]["train_mlp"],
         train_unembed=config["lora"]["train_unembed"],
+        action_supervision_policy=policy,
     )
 
 
@@ -357,7 +387,7 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
                 continue
             samples.append(make_action_sample(obs, best, game_id, rollout_advantage=advantage,
                 rollout_best_value=values[best.action_id], candidate_count=len(values), source="sft_rejection_sampling",
-                teacher="pool_prior_counter_continuation"))
+                teacher="pool_prior_counter_continuation", rollout_candidate_values=values))
         write_jsonl(shard, samples + belief_rows)
         accepted.extend(samples)
         beliefs.extend(belief_rows)
@@ -571,7 +601,7 @@ def generate_figures(output: Path) -> list[str]:
 
 
 
-def validate_run_artifacts(output: Path) -> None:
+def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | None = None) -> None:
     """Validate existing contracts and both task schemas before paid preflight."""
     from liars_agent.training.tinker_train import validate_training_sample
     paths = [output / "dataset/data_summary.json", output / "dataset/rs_summary.json", output / "experiment_summary.json"]
@@ -581,7 +611,11 @@ def validate_run_artifacts(output: Path) -> None:
     paths.extend((output / "dataset/batches").glob("batch_*.json"))
     for path in paths:
         if path.exists():
-            require_contract(read_json(path), str(path))
+            artifact = read_json(path)
+            require_contract(artifact, str(path))
+            if action_supervision_policy is not None and path.name in ("adapter_metadata.json", "training_progress.json"):
+                from liars_agent.training.action_supervision import require_training_objective
+                require_training_objective(artifact, action_supervision_policy)
     classifier = output / "models/small_classifier_weights.json"
     if classifier.exists():
         require_contract(read_json(classifier), "classifier weights")
@@ -590,7 +624,7 @@ def validate_run_artifacts(output: Path) -> None:
     sample_paths.extend(p for p in (output / "dataset/rs_games").glob("game_*.jsonl") if not p.name.endswith(".replay.jsonl"))
     for path in sample_paths:
         for row in read_jsonl(path):
-            validate_training_sample(row)
+            validate_training_sample(row, action_supervision_policy=action_supervision_policy)
     split_path = output / "dataset/game_splits.json"
     if split_path.exists():
         partition = read_json(split_path)
@@ -611,15 +645,20 @@ def validate_run_artifacts(output: Path) -> None:
     if snapshot.exists() and read_json(snapshot).get("dataset", {}).get("action_refinement"):
         from liars_agent.training.dataset_quality import validate_refined_dataset
         validate_refined_dataset(output)
+    if snapshot.exists() and read_json(snapshot).get("dataset", {}).get("supervision_preparation"):
+        from liars_agent.training.prepare_supervision import validate_prepared_supervision_run
+        validate_prepared_supervision_run(output)
 
 def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: list[str] | None = None) -> dict:
     require_contract(config, "experiment configuration")
+    from liars_agent.training.action_supervision import normalize_action_policy
+    policy = normalize_action_policy(config["training"].get("action_supervision"))
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     snapshot = output / "config.json"
     if snapshot.exists() and read_json(snapshot) != config:
         raise ValueError("This output directory belongs to a different configuration; choose a new directory.")
-    validate_run_artifacts(output)
+    validate_run_artifacts(output, action_supervision_policy=policy)
     write_json(snapshot, config)
     model_keys = model_keys or (list(MODEL_LABELS) if stage != "local" else ["small_classifier", "rule_counter"])
     if any(key not in MODEL_LABELS for key in model_keys):
@@ -635,9 +674,10 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
         write_json(status_path, status)
         try:
             needs_api = current in ("sft", "rs", "preflight") or (current == "evaluate" and any(k.startswith("lora") or k == "zero_shot" for k in model_keys))
-            validate_run_artifacts(output)
+            validate_run_artifacts(output, action_supervision_policy=policy)
             if needs_api and backend is None:
                 backend = make_backend(config, output)
+            if current == "preflight":
                 backend.preflight()
             if current == "data":
                 if not (output / "dataset/data_summary.json").exists():
