@@ -257,7 +257,7 @@ class LLMAgent(BaseAgent):
 
         all_bluffs = sorted(pure_bluff + mixed_bluff, key=lambda a: len(a.cards))
         if truthful:
-            # 1. 若剩余手牌全部是真牌（<=3张），一次性全部打空，迫使下家要么误判质疑真牌自杀，要么接盘
+            # 1. 将剩余真牌全部打空后退出本小局行动；若被质疑，由质疑者受罚开一枪。
             full_hand_truth = [a for a in truthful if len(a.cards) == len(obs.own_hand)]
             if full_hand_truth:
                 chosen = full_hand_truth[0]
@@ -266,7 +266,7 @@ class LLMAgent(BaseAgent):
                         "belief_bluff_prob": bluff_prob if obs.last_claim else 0.0,
                         "estimated_opponent_style": est_style,
                         "chosen_action_id": chosen.action_id,
-                        "rationale": f"[{self.mode}] 剩余手牌全为真牌，一次性打空手牌必立于不败之地！",
+                        "rationale": f"[{self.mode}] 打空剩余真牌后退出本小局行动；若被质疑，由质疑者受罚开一枪，整场胜负尚未确定。",
                     },
                     ensure_ascii=False,
                 )

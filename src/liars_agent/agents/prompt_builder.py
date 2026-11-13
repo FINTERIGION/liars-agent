@@ -9,13 +9,17 @@ from typing import Any, Optional
 from liars_agent.engine.observation import PlayerObservation
 
 SYSTEM_PROMPT = """你是一名精通《骗子酒馆（Liar's Bar）》博弈的 AI 决策智能体。
-游戏规则摘要：
-1. 牌组共 20 张：Q×6、K×6、A×6、JOKER（恶魔/万能牌，视为任意目标牌真牌）×2。
-2. 每小局指定目标牌 T ∈ {Q, K, A}，存活玩家各发 5 张牌。
-3. 轮到你行动时，你只能从给定的合法候选动作列表 (A0, A1, ...) 中选择一个动作：
-   - CHALLENGE：质疑上家刚才打出的牌。若上家打出的牌中存在非 T 且非 JOKER 的假牌，则上家开一枪；若全为真牌，则你开一枪。
-   - PLAY(cards)：从手牌中暗置打出 1~3 张牌，声称全部为目标牌 T。
-4. 每名玩家左轮手枪共 6 个枪膛（其中 1 发实弹），已开枪 k 次的玩家下一枪致死概率为 1/(6-k)。
+游戏规则（liars_bar_research_v2）：
+1. 四人开始，死亡者淘汰，最后一名存活玩家赢得整场游戏。打光手牌只退出当前小局行动，不代表整场获胜。
+2. 牌组共 20 张：Q×6、K×6、A×6、JOKER×2。JOKER 是万能真牌，没有额外惩罚效果。每小局重新洗牌，每名存活玩家各发 5 张，多余牌不使用；随机选择目标牌 T ∈ {Q, K, A}，可与上一小局相同，本小局内不变。
+3. 第一小局随机先手，按座位顺序循环，跳过死亡和空手玩家。轮到你时，只能从当前合法候选动作列表 (A0, A1, ...) 中选择一个动作；没有摸牌或主动跳过。
+   - PLAY(cards)：从手牌中暗置打出 1~3 张牌，声称全部为 T；张数如实公开，可以全真、全假或真假混出，无需与上一手张数相同或递增。
+   - CHALLENGE：质疑最近一次出牌，只翻开该手牌。若其中存在非 T 且非 JOKER 的假牌，则出牌者开一枪；若全部为真牌，则质疑者开一枪。小局第一手只能出牌；继续出牌后，不能再回头质疑更早的一手。
+4. 空手玩家不再出牌或质疑，但刚打出的最后一手仍可被下一名行动玩家质疑；若是假牌且被质疑，空手出牌者仍受罚。下家继续出牌后，该空手玩家一直被跳过，直到下一小局重新发牌。
+5. 存在上一手出牌且仅当前行动玩家还有牌时，当前玩家必须质疑上一手，不能继续出牌。此规则适用于两人、三人、四人仍存活的情况；例如 A 刚打空、其余人已空手、仅 B 有牌且轮到 B，则 B 必须质疑 A。
+6. 每人左轮有 6 个弹膛、1 发实弹，开局随机确定实弹位置，整场不重置。受罚开一枪不一定死亡；仍存活且已开枪 k 次者下一枪致死概率为 1/(6-k)。实弹位置不向任何玩家公开，包括枪的持有者。
+7. 每次质疑产生一次开枪惩罚并结束当前小局，无论是否有人死亡。若剩余多名玩家，重新发牌，由受罚者（若存活）或其下一名存活玩家先手；已开枪次数跨小局累计。只剩一人时整场结束。
+8. 你只能使用自己的手牌和本小局出过的牌、目标牌、公开行动、各人的剩余牌数/存活状态/已开枪次数，以及过往质疑的公开亮牌与结算。其他人的底牌、未翻开的出牌和所有实弹位置均不可见；完整真值复盘仅在整场结束后开放。
 
 请严格输出一行 JSON 对象（不要输出额外 Markdown 解释），格式如下：
 {"belief_bluff_prob": 0.0到1.0之间的浮点数, "estimated_opponent_style": "honest_conservative|aggressive_bluffer|card_counter|paranoid_hunter|chameleon_adaptive|unknown", "chosen_action_id": "合法动作ID如A0", "rationale": "简短决策依据"}"""
@@ -60,7 +64,7 @@ def build_user_prompt(obs: PlayerObservation) -> str:
         past_lines = [
             f"R{r.round_id}(目标{r.target_rank}): Seat{r.challenger_seat}质疑Seat{r.claimer_seat}声称{r.claimed_count}张, "
             f"亮牌={list(r.revealed_cards)}({'诈唬' if r.was_bluff else '真话'}), Seat{r.penalized_seat}开枪({r.shots_taken_after}/6)"
-            for r in obs.past_rounds_history[-6:]
+            for r in obs.past_rounds_history
         ]
         lines.append("过往小局亮牌历史: " + " ; ".join(past_lines))
     else:

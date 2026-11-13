@@ -25,6 +25,11 @@ from liars_agent.training.dataset_splitter import split_dataset_by_game_id
 class TestReplayAndDeterminism(unittest.TestCase):
     """验证相同种子与智能体配置必产生 100% 相同的轨迹指纹，且回放校验器全部通过."""
 
+    def test_historical_samples_are_rejected_before_training(self) -> None:
+        historical = {"game_id": "old_game", "historical_example": True}
+        with self.assertRaisesRegex(ValueError, "Historical examples"):
+            split_dataset_by_game_id([historical])
+
     def _run_single_game(self, seed: int) -> GameReplayBundle:
         agents = [
             LLMAgent(name="qwen35_9b_lora_sft", mode="lora_sft", seed=seed),

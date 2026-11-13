@@ -1,4 +1,4 @@
-"""Gradio 交互式对局、AI 补位、决策复盘与行为画像工作台（内置零依赖 Web 服务回退支持）."""
+"""Gradio 对局与终局复盘工作台；未安装 Gradio 时提供命令行演示."""
 
 from __future__ import annotations
 
@@ -47,6 +47,7 @@ class InteractiveSessionManager:
         game_seed: int = 2026,
     ) -> dict[str, Any]:
         self.engine = LiarsBarEngine(game_id=f"ui_game_{game_seed}", game_seed=game_seed)
+        self.latest_replay = None
         self.human_seat = 0 if seat0_spec == "human" else None
         specs = [seat0_spec, seat1_spec, seat2_spec, seat3_spec]
         self.agents = [
@@ -100,8 +101,12 @@ class InteractiveSessionManager:
         }
 
     def inspect_replay_step(self, step_index: int) -> dict[str, Any]:
-        """决策复盘器：对比第 `step_index` 步决策时的可见信息、模型信念/风险评估与事后底牌真值."""
-        if self.engine is None or not self.engine.step_truth_logs:
+        """仅整场结束后开放所有玩家的决策时观测和事后真值."""
+        if self.engine is None:
+            return {"status": "idle"}
+        if not self.engine.is_game_over():
+            return {"status": "整场对局结束后开放完整复盘。", "current_view": self.get_current_view()}
+        if not self.engine.step_truth_logs:
             return {"error": "No steps recorded yet."}
         idx = max(0, min(len(self.engine.step_truth_logs) - 1, step_index))
         step_log = self.engine.step_truth_logs[idx]
@@ -138,8 +143,8 @@ class InteractiveSessionManager:
                 "rationale": step_log.decision_record.get("rationale"),
             },
             "post_hoc_ground_truth": {
-                "all_players_true_hands": step_log.ground_truth_hands,
-                "all_players_fatal_chambers": step_log.ground_truth_fatal_chambers,
+                "all_players_true_hands": {str(s): cards for s, cards in step_log.ground_truth_hands.items()},
+                "all_players_fatal_chambers": {str(s): slot for s, slot in step_log.ground_truth_fatal_chambers.items()},
                 "pending_claim_actual_cards": step_log.pending_claim_actual_cards,
                 "pending_claim_was_bluff": step_log.pending_claim_was_bluff,
                 "round_resolution": step_log.round_resolution,
@@ -147,7 +152,7 @@ class InteractiveSessionManager:
         }
 
     def get_session_profiles(self) -> dict[str, Any]:
-        if self.latest_replay is None:
+        if self.engine is None or not self.engine.is_game_over() or self.latest_replay is None:
             return {}
         rep_dict = self.latest_replay.to_dict()
         profiles = {}
@@ -160,63 +165,69 @@ class InteractiveSessionManager:
         }
 
 
+def create_ui():
+    """构建界面；每个浏览器会话独立保存对局，终局前禁止查看真值。"""
+    import gradio as gr
+
+    agent_choices = [
+        "human", "qwen35_9b_lora_sft", "qwen35_9b_lora_rs", "qwen35_9b_zero_shot",
+        "small_classifier", "honest_conservative", "aggressive_bluffer",
+        "card_counter", "paranoid_hunter", "chameleon_adaptive",
+    ]
+    with gr.Blocks(title="骗子酒馆 AI 决策复盘工作台") as demo:
+        session_state = gr.State(None)
+        gr.Markdown("# 骗子酒馆 AI — 对局与终局复盘\n对局中仅显示玩家可见信息；整场结束后开放所有步骤的真值复盘。")
+        with gr.Row():
+            s0 = gr.Dropdown(agent_choices, value="qwen35_9b_lora_sft", label="Seat 0")
+            s1 = gr.Dropdown(agent_choices[1:], value="honest_conservative", label="Seat 1")
+            s2 = gr.Dropdown(agent_choices[1:], value="aggressive_bluffer", label="Seat 2")
+            s3 = gr.Dropdown(agent_choices[1:], value="card_counter", label="Seat 3")
+            seed_in = gr.Number(value=2026, label="对局随机种子", precision=0)
+            start_btn = gr.Button("开始/模拟对局", variant="primary")
+        state_out = gr.JSON(label="当前玩家视图 / 结局")
+        with gr.Row():
+            step_slider = gr.Slider(0, 1, value=0, step=1, interactive=False, label="终局复盘步骤")
+            inspect_btn = gr.Button("查看终局复盘", interactive=False)
+        replay_out = gr.JSON(label="单步决策复盘")
+        profile_out = gr.JSON(label="本局行为画像与回放校验")
+
+        def on_start(a0, a1, a2, a3, seed):
+            session = InteractiveSessionManager()
+            view = session.start_game(a0, a1, a2, a3, int(seed))
+            finished = session.engine.is_game_over()
+            total_steps = len(session.engine.step_truth_logs)
+            return (
+                session, view, session.inspect_replay_step(0), session.get_session_profiles(),
+                gr.Slider(minimum=0, maximum=max(1, total_steps - 1), value=0, interactive=finished),
+                gr.Button(interactive=finished),
+            )
+
+        start_btn.click(
+            on_start, [s0, s1, s2, s3, seed_in],
+            [session_state, state_out, replay_out, profile_out, step_slider, inspect_btn],
+            api_name="start_game",
+        )
+        inspect_btn.click(
+            lambda session, index: session.inspect_replay_step(int(index)) if session else {"status": "idle"},
+            [session_state, step_slider], replay_out, api_name="inspect_replay",
+        )
+    return demo
+
+
 def launch_ui(host: str = "127.0.0.1", port: int = 7860) -> None:
-    """启动 Gradio 界面；若当前环境未安装 Gradio，则启动内置轻量 Web 复盘工作台."""
+    """启动 Gradio；若未安装，则运行完整 AI 对局的命令行演示。"""
     try:
-        import gradio as gr  # type: ignore[import-not-found]
-
-        session = InteractiveSessionManager()
-        agent_choices = [
-            "human",
-            "qwen35_9b_lora_sft",
-            "qwen35_9b_lora_rs",
-            "qwen35_9b_zero_shot",
-            "small_classifier",
-            "honest_conservative",
-            "aggressive_bluffer",
-            "card_counter",
-            "paranoid_hunter",
-            "chameleon_adaptive",
-        ]
-
-        with gr.Blocks(title="骗子酒馆 AI 决策智能体训练与评测工作台") as demo:
-            gr.Markdown("# 骗子酒馆 AI 决策智能体 — 对局练习、决策复盘与行为画像工作台")
-            with gr.Row():
-                s0 = gr.Dropdown(agent_choices, value="qwen35_9b_lora_sft", label="Seat 0")
-                s1 = gr.Dropdown(agent_choices[1:], value="honest_conservative", label="Seat 1")
-                s2 = gr.Dropdown(agent_choices[1:], value="aggressive_bluffer", label="Seat 2")
-                s3 = gr.Dropdown(agent_choices[1:], value="card_counter", label="Seat 3")
-                seed_in = gr.Number(value=2026, label="对局随机种子 (Seed)", precision=0)
-                start_btn = gr.Button("开始/模拟对局", variant="primary")
-
-            state_out = gr.JSON(label="当前对局视图 / 结局摘要")
-            with gr.Row():
-                step_slider = gr.Slider(0, 40, value=0, step=1, label="决策复盘步进索引 (Step Index)")
-                inspect_btn = gr.Button("查看该步决策复盘（对比可见信息 vs 事后真值）")
-            replay_out = gr.JSON(label="单步决策复盘详情")
-            profile_out = gr.JSON(label="本局各智能体四维行为画像与回放哈希校验")
-
-            def _on_start(a0, a1, a2, a3, sd):
-                view = session.start_game(a0, a1, a2, a3, int(sd))
-                rep = session.inspect_replay_step(0)
-                prof = session.get_session_profiles()
-                return view, rep, prof
-
-            start_btn.click(_on_start, [s0, s1, s2, s3, seed_in], [state_out, replay_out, profile_out])
-            inspect_btn.click(lambda idx: session.inspect_replay_step(int(idx)), [step_slider], [replay_out])
-
-        demo.launch(server_name=host, server_port=port)
+        demo = create_ui()
     except ImportError:
-        print(f"[Info] Gradio not installed; running CLI demo & verification session instead.")
+        print("[Info] Gradio not installed; running CLI demo instead.")
         session = InteractiveSessionManager()
         view = session.start_game(
-            seat0_spec="qwen35_9b_lora_sft",
-            seat1_spec="honest_conservative",
-            seat2_spec="aggressive_bluffer",
-            seat3_spec="card_counter",
-            game_seed=2026,
+            seat0_spec="qwen35_9b_lora_sft", seat1_spec="honest_conservative",
+            seat2_spec="aggressive_bluffer", seat3_spec="card_counter", game_seed=2026,
         )
         print(json.dumps(view, indent=2, ensure_ascii=False))
+        return
+    demo.launch(server_name=host, server_port=port)
 
 
 if __name__ == "__main__":

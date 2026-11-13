@@ -232,7 +232,7 @@ def run_pipeline(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run full Liar's Bar AI training and evaluation pipeline.")
-    parser.add_argument("--output-dir", default="outputs", help="Output directory for artifacts")
+    parser.add_argument("--output-dir", default="outputs/runs/rules_v2_demo", help="New demo artifacts directory; keep historical outputs separate")
     parser.add_argument("--train-games", type=int, default=60)
     parser.add_argument("--target-samples", type=int, default=400)
     parser.add_argument("--eval-blocks", type=int, default=45)

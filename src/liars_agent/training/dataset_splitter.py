@@ -13,6 +13,8 @@ def split_dataset_by_game_id(
     seed: int = 42,
 ) -> dict[str, list[dict[str, Any]]]:
     """严格以 `game_id` 为单位切分数据集，确保同一局游戏的所有决策步只出现在唯一划分中."""
+    if any(sample.get("historical_example") for sample in samples):
+        raise ValueError("Historical examples cannot be used for training; regenerate data with current rules.")
     if not (0.0 < train_ratio < 1.0 and 0.0 <= val_ratio < 1.0 and train_ratio + val_ratio < 1.0):
         raise ValueError("Invalid split ratios.")
 

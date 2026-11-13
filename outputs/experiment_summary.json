@@ -393,5 +393,7 @@
     "outputs/figures/fig2_history_ablation.svg",
     "outputs/figures/fig3_risk_hand_stratified.svg",
     "outputs/figures/fig4_calibration_and_profile.svg"
-  ]
+  ],
+  "historical_example": true,
+  "history_note": "旧版本模拟产物，非真实 Qwen 训练或评测结果，不作为当前规则实验结果。"
 }

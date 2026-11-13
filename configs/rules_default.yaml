@@ -1,5 +1,6 @@
-# 标准研究用骗子牌规则配置 (Standard Research Rules for Liar's Bar)
-game_name: "liars_bar_research_v1"
+# 固定研究规则规格说明，供 README、引擎和测试核对；不是运行时配置入口。
+# 引擎执行这套固定规则，不提供关闭空手退出/强制质疑的开关。
+game_name: "liars_bar_research_v2"
 num_players: 4
 hand_size: 5
 max_play_cards: 3
@@ -9,7 +10,7 @@ deck:
   Q: 6
   K: 6
   A: 6
-  JOKER: 2  # 恶魔/万能牌，视为任意当前目标牌真牌
+  JOKER: 2  # 万能真牌，无额外惩罚效果
 
 target_ranks:
   - "Q"
@@ -19,11 +20,15 @@ target_ranks:
 revolver:
   chambers: 6
   fatal_bullets: 1
+  reset_between_rounds: false
 
 boundary_rules:
-  # 存在上一手出牌且除当前行动玩家外其余存活玩家均已空手时，当前玩家必须质疑上一手，不能继续出牌
-  # 两人残局中上家打空手牌也属于该情形
-  # 空手玩家不再出牌或质疑；其刚打出的牌仍可被下家质疑，下家继续出牌后跳过该空手玩家
-  force_challenge_when_others_empty: true
-  force_challenge_on_two_player_empty_hand: true
-  max_steps_per_round: 60
+  empty_hand: "退出本小局行动；最后一手仍可被质疑，下家继续出牌后跳过，下一小局重新发牌"
+  forced_challenge: "存在上一手且仅当前行动玩家有牌时，必须质疑；适用于所有存活人数"
+  # 不设按步数判负、强制开枪或结束小局的规则。
+
+turn_order: "按座位顺序，跳过死亡和空手玩家；首局随机先手"
+round_end: "每次质疑结算一次开枪后结束小局，无论是否死亡"
+next_starter: "受罚者若存活则先手，否则由其下一名存活玩家先手"
+winner: "最后一名存活玩家"
+replay_visibility: "整场结束后才开放全量真值"
