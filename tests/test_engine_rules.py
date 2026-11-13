@@ -82,5 +82,41 @@ class TestEngineRulesAndBoundaries(unittest.TestCase):
             engine.step("A999_NONEXISTENT")
 
 
+    def test_last_holder_must_challenge_with_three_or_four_players_alive(self) -> None:
+        for alive_count in (3, 4):
+            for last_card in ("Q", "K"):
+                with self.subTest(alive_count=alive_count, last_card=last_card):
+                    engine = LiarsBarEngine(game_seed=10)
+                    engine.alive = [seat < alive_count for seat in range(4)]
+                    engine.hands = [[last_card], ["K", "A"], [], []]
+                    engine.current_turn_seat = 0
+                    engine.target_rank = "Q"
+                    engine.step(CandidateAction("custom", "PLAY", (last_card,)))
+                    self.assertEqual(engine.current_turn_seat, 1)
+                    self.assertEqual(
+                        [action.action_type for action in engine.get_legal_actions()],
+                        ["CHALLENGE"],
+                    )
+                    hands_before = [list(hand) for hand in engine.hands]
+                    with self.assertRaises(ValueError):
+                        engine.step(CandidateAction("custom", "PLAY", ("K",)))
+                    self.assertEqual(engine.hands, hands_before)
+                    self.assertEqual(engine.current_turn_seat, 1)
+                    resolution = engine.step("CHALLENGE")
+                    self.assertTrue(resolution.forced_challenge)
+                    self.assertEqual(resolution.penalized_seat, 0 if last_card == "K" else 1)
+
+    def test_play_remains_legal_when_another_alive_player_has_cards(self) -> None:
+        engine = LiarsBarEngine(game_seed=10)
+        engine.alive = [True, True, True, False]
+        engine.hands = [["Q"], ["K", "A"], ["A"], []]
+        engine.current_turn_seat = 0
+        engine.target_rank = "Q"
+        engine.step(CandidateAction("custom", "PLAY", ("Q",)))
+        self.assertEqual(engine.current_turn_seat, 1)
+        self.assertTrue(any(a.action_type == "PLAY" for a in engine.get_legal_actions()))
+        self.assertTrue(any(a.action_type == "CHALLENGE" for a in engine.get_legal_actions()))
+
+
 if __name__ == "__main__":
     unittest.main()

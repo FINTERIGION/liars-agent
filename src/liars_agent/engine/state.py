@@ -74,7 +74,7 @@ class LiarsBarEngine:
     核心特性：
     1. 确定性可复现：给定 `game_seed`，每小局的洗牌、目标牌以及各座位的左轮实弹位置完全确定；
     2. 座位槽位绑定：支持 `seat_offset` 用于配对评测轮换，确保轮换座位时发牌槽位与实弹槽位严格对齐；
-    3. 边界规则完备：当除上家外其余存活玩家均已打空手牌（或仅剩 2 人且上家打空手牌）时，强制触发质疑；
+    3. 强制质疑：存在上一手出牌且除当前行动玩家外其余存活玩家均已空手时，当前玩家必须质疑上一手；
     4. 严格观测隔离：`get_observation(seat)` 仅暴露玩家自身手牌与公开历史。
     """
 
@@ -179,18 +179,16 @@ class LiarsBarEngine:
         """检查当前行动玩家是否因边界条件必须执行 CHALLENGE."""
         if self.pending_play is None:
             return False
-        # 情况 1：当前行动玩家自身已无手牌（理论上会被跳过，但作为安全兜底）
+        # 当前行动玩家为空手时，只能质疑上一手。
         if len(self.hands[seat]) == 0:
             return True
-        # 情况 2：除当前行动玩家外，其余所有存活玩家手牌均已打空（若当前玩家再出牌将无人有牌可接）
+        # 仅当前行动玩家还有牌时，必须立即质疑，不能再出牌。
         other_alive_with_cards = [
             s
             for s in range(self.num_players)
             if self.alive[s] and s != seat and len(self.hands[s]) > 0
         ]
-        if len(other_alive_with_cards) == 0:
-            return True
-        return False
+        return len(other_alive_with_cards) == 0
 
     def get_legal_actions(self, seat: Optional[int] = None) -> tuple[CandidateAction, ...]:
         """枚举当前行动玩家的所有合法候选动作（按牌面多重集去重并固定编号 A0, A1, ...）."""
