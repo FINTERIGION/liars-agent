@@ -117,14 +117,23 @@ def build_rollout_agents(teacher_config: dict, actor_seat: int, seed: int) -> li
     return agents
 
 
-def evaluate_observation_action_values(
+def evaluate_observation_action_rewards(
     obs: PlayerObservation, teacher_config: dict | None = None, num_rollouts: int = 8,
     rollout_seed: int = 1000, candidate_actions: Sequence[CandidateAction] | None = None,
-) -> dict[str, float]:
+    *, start_index: int = 0,
+) -> dict[str, list[float]]:
+    """Paired rewards indexed by trajectory, with resumable deterministic seeds.
+
+    A later call can evaluate indices ``start_index:start_index + num_rollouts``
+    without repeating earlier trajectories. Every candidate uses the same hidden
+    world and fresh copies of the same policy seeds at each trajectory index.
+    """
     if obs.ablation_mode != "full":
         raise ValueError("Teacher training requires full observations; ablation is evaluation-only.")
-    if num_rollouts < 1:
-        raise ValueError("num_rollouts must be positive.")
+    if type(num_rollouts) is not int or num_rollouts < 1:
+        raise ValueError("num_rollouts must be a positive integer.")
+    if type(start_index) is not int or start_index < 0:
+        raise ValueError("start_index must be a nonnegative integer.")
     config = DEFAULT_TEACHER_CONFIG if teacher_config is None else teacher_config
     if not isinstance(config, dict):
         raise TypeError("Teacher accepts a policy-pool configuration, never actual-game agent instances.")
@@ -132,15 +141,26 @@ def evaluate_observation_action_values(
     legal = {a.action_id: a for a in obs.legal_actions}
     if not candidates or any(legal.get(a.action_id) != a for a in candidates) or len({a.action_id for a in candidates}) != len(candidates):
         raise ValueError("Candidates must be distinct legal actions from this observation.")
-    values = {a.action_id: 0.0 for a in candidates}
-    for index in range(num_rollouts):
+    rewards: dict[str, list[float]] = {a.action_id: [] for a in candidates}
+    for index in range(start_index, start_index + num_rollouts):
         sample_seed = _derive_seed(rollout_seed, "trajectory", index)
         state = sample_rollout_state(obs, _derive_seed(sample_seed, "state"))
         rollout_agents = build_rollout_agents(config, obs.observer_seat, _derive_seed(sample_seed, "policies"))
         for action in candidates:
-            values[action.action_id] += _score_continuation(_clone_simulation(state), obs.observer_seat,
-                action, copy.deepcopy(rollout_agents)) / num_rollouts
-    return values
+            rewards[action.action_id].append(_score_continuation(_clone_simulation(state), obs.observer_seat,
+                action, copy.deepcopy(rollout_agents)))
+    return rewards
+
+
+def evaluate_observation_action_values(
+    obs: PlayerObservation, teacher_config: dict | None = None, num_rollouts: int = 8,
+    rollout_seed: int = 1000, candidate_actions: Sequence[CandidateAction] | None = None,
+) -> dict[str, float]:
+    """Compatibility API retaining the original ordered mean accumulation."""
+    rewards = evaluate_observation_action_rewards(obs, teacher_config, num_rollouts,
+                                                  rollout_seed, candidate_actions)
+    return {action_id: sum(reward / num_rollouts for reward in values)
+            for action_id, values in rewards.items()}
 
 
 def make_action_sample(obs: PlayerObservation, action: CandidateAction, game_id: str, **metadata) -> dict:

@@ -99,6 +99,30 @@ python -m liars_agent.ui.app --port 7860 \
 
 `--eval-blocks`、`--target-samples`（动作）、`--belief-target-samples`（信念）、`--train-games`、`--seed` 可覆盖相应配置；`--models small_classifier,rule_counter` 可选择本地评测子集。使用 `--smoke` 只缩小数据与评测规模，不会把模拟策略改名成真实模型；要避免远端调用，请使用 `--stage local`。
 
+已有数据可以单独进行本地质量复评，输出到新的运行目录：
+
+```bash
+python scripts/refine_dataset.py \
+  --source-run outputs/runs/selfplay_v2_20261113_01 \
+  --output-dir outputs/runs/selfplay_v2_20261113_01_quality --workers 8
+python scripts/build_endgame_coverage.py \
+  --source-run outputs/runs/selfplay_v2_20261113_01 \
+  --output-dir outputs/runs/selfplay_v2_20261113_01_quality/endgame_coverage \
+  --seed 2026111301 --samples-per-cell 10
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/verify_dataset_quality.py \
+  --run-dir outputs/runs/selfplay_v2_20261113_01_quality
+python scripts/audit_refined_labels.py \
+  --run-dir outputs/runs/selfplay_v2_20261113_01_quality --samples 60 --workers 4
+```
+
+复评先用独立的 8 次配对续玩筛查；最高分并列、第一与第二名差距不超过 0.05、旧标签不在新最高分集合或输入重复时增加到 32 次，仍并列或接近则增加到 64 次。扩量仅追加新轨迹，同一次轨迹内所有候选共用隐藏状态与随机条件。相同输入共用报告及标签；原有“最佳分数减候选平均分至少 0.05”的筛选不变，复评后不达标的样本从同一划分的源对局未使用观测中补换。信念样本、完整对局划分及原始数据保留，逐候选奖励和未决标记写入 `quality/`。这些分差用于分配计算量，不是统计置信度；64 次后仍接近的动作保留确定性选择并明确标记，不能当作已证唯一最优。
+
+残局检查集采用独立游戏种子及覆盖策略，通过合法动作从初始状态走完整局，单独检查两／三／四人生还时的末张、上家打空和强制质疑；它不混入训练或自然分布主评测。两人生还时“上家打空且仍可自由出牌”按规则不可达。检查集的观测与真值分文件保存，每个可达格至少来自 5 个不同对局。
+
+最后一个命令以固定种子随机抽取训练侧保留的原样本，用独立随机流、每候选 128 次续玩比较旧标签与复评标签。它只报告这组抽查的教师收益与最优集合命中情况，不包含补换样本、不使用验证或测试集，也不把结果回流调参或宣称真实胜率提升。
+
+复评目录的 `config.json` 可直接作为后续流水线的 `--config`，并同时将 `--output-dir` 指向该目录；恢复前会校验复评版本、保存奖励、动作标签和划分。上述本地命令不创建 Tinker 服务会话，tokenizer 核验只使用本地缓存。
+
 ## 方法与默认参数
 
 - **规则：** 采用上文 `liars_bar_research_v2` 固定游戏规则。

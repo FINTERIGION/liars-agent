@@ -51,11 +51,14 @@ def write_jsonl(path: Path, records: Iterable[dict]) -> None:
 
 def load_config(path: str | Path) -> dict:
     path = Path(path).resolve()
-    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config = read_json(path) if path.suffix == ".json" else yaml.safe_load(path.read_text(encoding="utf-8"))
     if config["platform"] != "tinker":
         raise ValueError("The implemented real training backend is Tinker.")
-    pool_path = path.parent / config.pop("opponent_config", "opponent_pools.yaml")
-    config["opponents"] = yaml.safe_load(pool_path.read_text(encoding="utf-8"))
+    if "contract" in config:
+        require_contract(config, "saved experiment configuration")
+    if "opponents" not in config:
+        pool_path = path.parent / config.pop("opponent_config", "opponent_pools.yaml")
+        config["opponents"] = yaml.safe_load(pool_path.read_text(encoding="utf-8"))
     # Instantiate configured agents once to catch misspelled or unused parameters.
     for pool in ("seen_pool", "unseen_pool"):
         for spec in config["opponents"][pool]["agents"]:
@@ -604,6 +607,10 @@ def validate_run_artifacts(output: Path) -> None:
         path = output / "dataset/rs_train.jsonl"
         if path.exists() and any(r["game_id"] in owner for r in read_jsonl(path)):
             raise ValueError("RS must use fresh training-side games.")
+    snapshot = output / "config.json"
+    if snapshot.exists() and read_json(snapshot).get("dataset", {}).get("action_refinement"):
+        from liars_agent.training.dataset_quality import validate_refined_dataset
+        validate_refined_dataset(output)
 
 def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: list[str] | None = None) -> dict:
     require_contract(config, "experiment configuration")
