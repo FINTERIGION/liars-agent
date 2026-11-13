@@ -4,7 +4,7 @@ import unittest
 
 from liars_agent.engine.state import LiarsBarEngine
 from liars_agent.training.action_supervision import (
-    make_action_supervision, resolve_action_supervision, select_action_completion,
+    make_action_supervision, resolve_action_supervision, action_target_completions,
     normalize_action_policy, mean_action_weight,
 )
 from liars_agent.training.data_generator import make_action_sample
@@ -21,15 +21,15 @@ class TestActionSupervision(unittest.TestCase):
         row["action_supervision"] = make_action_supervision(row, scores)
         return row
 
-    def test_ties_cycle_without_increasing_total_observation_weight(self):
+    def test_all_tied_answers_are_returned_without_increasing_state_weight(self):
         row = self.attach({self.ids[0]: .7, self.ids[1]: .7, self.ids[2]: .1})
-        first = select_action_completion(row, 13, 0)
-        second = select_action_completion(row, 13, 1)
-        self.assertNotEqual(first, second)
-        self.assertEqual(first, select_action_completion(row, 13, 2))
-        self.assertEqual(first, select_action_completion(dict(row, sample_id="different_game_id"), 13, 0))
+        answers = action_target_completions(row)
+        self.assertEqual(answers, action_target_completions(dict(row, sample_id="different_game_id")))
+        reversed_scores = self.attach({self.ids[2]: .1, self.ids[1]: .7, self.ids[0]: .7})
+        self.assertEqual(answers, action_target_completions(reversed_scores))
         self.assertEqual(resolve_action_supervision(row)["loss_weight"], 1)
-        self.assertEqual({json.loads(v)["chosen_action_id"] for v in (first, second)}, set(self.ids[:2]))
+        self.assertEqual({json.loads(v)["chosen_action_id"] for v in answers}, set(self.ids[:2]))
+        self.assertEqual(len(answers), 2)
 
     def test_small_positive_gap_downweights_but_never_creates_extra_targets(self):
         row = self.attach({self.ids[0]: .70, self.ids[1]: .68, self.ids[2]: .1})
@@ -53,6 +53,10 @@ class TestActionSupervision(unittest.TestCase):
             resolve_action_supervision(dict(self.row, action_refinement={"version":"v2"}))
         with self.assertRaises(ValueError):
             normalize_action_policy({"positive_gap_weight": float("nan")})
+        with self.assertRaises(ValueError):
+            normalize_action_policy({"version": "empirical_ties_weighted_actions_v1"})
+        with self.assertRaises(ValueError):
+            normalize_action_policy({"target_selection": "seeded_cycle_per_observation_epoch"})
         with self.assertRaises(ValueError):
             make_action_supervision(self.row, {self.ids[0]:.2,self.ids[1]:.8})
 

@@ -25,7 +25,7 @@ DEFAULT_RATES = {
     "train": 1.463,
 }
 PRICING_SOURCE = "https://tinker-docs.thinkingmachines.ai/tinker/models.json"
-PRICING_DATE = "2026-11-13"
+PRICING_DATE = "2026-11-14"
 
 
 class BudgetExceededError(RuntimeError):

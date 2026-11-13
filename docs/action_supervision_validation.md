@@ -2,6 +2,8 @@
 
 日期：2026-11-13。方法版本：`empirical_ties_weighted_actions_v1`。
 
+此页保留轮换方案的历史验收结果。当前全答案方案见[新的验收记录](all_answer_supervision_validation.md)。
+
 本次完成代码、数据准备和离线检查。未登录 Tinker，未创建模型服务会话，模型 forward、optimizer step 和付费调用均为 0。下列检查不代表模型训练或性能实验已经完成。
 
 ## 数据与训练目标

@@ -1,23 +1,19 @@
 """Empirical tied-action targets and explicit, configurable sample weights."""
 from __future__ import annotations
 
-import hashlib
 import json
 import math
-import random
-from typing import Any
 
 from liars_agent.agents.prompt_builder import validate_action_decision
 from liars_agent.engine.observation import PlayerObservation
-from liars_agent.engine.state import _derive_seed
-
-ACTION_SUPERVISION_VERSION = "empirical_ties_weighted_actions_v1"
+ACTION_SUPERVISION_VERSION = "empirical_all_answers_weighted_actions_v2"
 DEFAULT_ACTION_SUPERVISION_POLICY = {
     "version": ACTION_SUPERVISION_VERSION,
     "positive_gap_weight": .5,
     "tie_tolerance": 1e-12,
     "gap_threshold": .05,
-    "target_selection": "seeded_cycle_per_observation_epoch",
+    "target_selection": "all_acceptable_answers_per_state",
+    "answer_weighting": "equal_share_of_state_weight",
     "action_weight_normalization": "train_mean",
     "checkpoint_selection": "val_action_set_nll",
 }
@@ -93,13 +89,14 @@ def resolve_action_supervision(sample: dict, policy: dict | None = None) -> dict
         source="recorded_teacher_scores" if values is not None else "single_recorded_target_without_scores")
 
 
-def select_action_completion(sample: dict, seed: int, epoch: int, policy: dict | None = None) -> str:
-    if type(seed) is not int or type(epoch) is not int or epoch < 0:
-        raise ValueError("Target selection requires an integer seed and nonnegative epoch.")
-    targets = list(resolve_action_supervision(sample, policy)["target_action_ids"])
-    key = hashlib.sha256((sample["system"] + "\n" + sample["prompt"]).encode()).hexdigest()
-    random.Random(_derive_seed(seed, "action_target_cycle", key)).shuffle(targets)
-    return json.dumps({"chosen_action_id": targets[epoch % len(targets)]}, ensure_ascii=False)
+def action_target_completions(sample: dict, policy: dict | None = None) -> list[str]:
+    """Every acceptable answer, in a stable order independent of epoch/seed.
+
+    Callers divide the effective state weight equally across this list; the
+    action state's sampling frequency and optimizer schedule remain unchanged.
+    """
+    return [json.dumps({"chosen_action_id": action_id}, ensure_ascii=False)
+            for action_id in resolve_action_supervision(sample, policy)["target_action_ids"]]
 
 
 def mean_action_weight(rows: list[dict], policy: dict | None = None) -> float:

@@ -18,8 +18,8 @@ from types import SimpleNamespace
 from liars_agent.contracts import current_contract
 from liars_agent.experiment import read_json, read_jsonl, write_json
 from liars_agent.training.action_supervision import (
-    mean_action_weight, normalize_action_policy, resolve_action_supervision,
-    select_action_completion,
+    action_target_completions, mean_action_weight, normalize_action_policy,
+    resolve_action_supervision,
 )
 from liars_agent.training.action_validation import candidate_completion
 from liars_agent.training.prepare_supervision import validate_prepared_supervision_run
@@ -110,22 +110,22 @@ def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None
             max_input_tokens = len(input_tokens)
             longest = {"sample_id": row["sample_id"], "task": row["task"],
                        "input_tokens": len(input_tokens), "complete_sequence_tokens": len(input_tokens) + 1}
-        result = {"input_tokens": len(input_tokens), "answer_tokens": answer_tokens}
+        result = {"input_tokens": len(input_tokens), "answer_tokens": answer_tokens,
+                  "supervised_weight": math.fsum(weights)}
         datum_cache[key] = result
         return result
 
     summary_by_split = {}
-    epoch_lengths = [[] for _ in range(epochs)]
+    action_expanded_lengths, action_target_counts = [], []
     canonical_lengths = {split: {task: [] for task in ("action", "belief")} for split in SPLITS}
     effective_train_weights = []
+    measured_train_weights = []
     all_target_variants = 0
     belief_action_metadata_checks = 0
     belief_weight_rejection_checks = 0
     checked_rows = 0
     for split in SPLITS:
         groups, target_sizes = Counter(), Counter()
-        target_sets_larger_than_epochs = 0
-        target_sets_larger_than_three = 0
         action_target_variants = 0
         for row in grouped[split]["action"]:
             validate_training_sample(row, action_supervision_policy=policy)
@@ -133,33 +133,29 @@ def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None
             targets = descriptor["target_action_ids"]
             groups[descriptor["group"]] += 1
             target_sizes[len(targets)] += 1
-            target_sets_larger_than_epochs += len(targets) > epochs
-            target_sets_larger_than_three += len(targets) > 3
             weight = descriptor["loss_weight"] / train_mean if split == "train" else 1.0
+            answer_weight = weight / len(targets)
             if split == "train":
                 effective_train_weights.append(weight)
-            canonical_lengths[split]["action"].append(check_datum(row, weight=weight)["input_tokens"])
-            target_lengths = {}
-            for action_id in targets:
-                completion = json.dumps({"chosen_action_id": action_id}, ensure_ascii=False)
-                target_lengths[action_id] = check_datum(row, completion, weight)["input_tokens"]
+            canonical_lengths[split]["action"].append(check_datum(row, weight=answer_weight)["input_tokens"])
+            completions = action_target_completions(row, policy)
+            selected = [json.loads(completion)["chosen_action_id"] for completion in completions]
+            require(len(selected) == len(targets) and set(selected) == set(targets),
+                    "State expansion must contain every acceptable answer exactly once.")
+            require(action_target_completions(row, policy) == completions,
+                    "State answer expansion is not deterministic.")
+            target_data = []
+            for completion in completions:
+                target_data.append(check_datum(row, completion, answer_weight))
                 action_target_variants += 1
                 all_target_variants += 1
-            full_cycle = [json.loads(select_action_completion(row, seed, epoch, policy))["chosen_action_id"]
-                          for epoch in range(len(targets) + 1)]
-            require(set(full_cycle[:-1]) == set(targets) and len(set(full_cycle[:-1])) == len(targets),
-                    "An epoch cycle does not visit each acceptable target exactly once.")
-            require(full_cycle[-1] == full_cycle[0], "Target rotation does not repeat after one cycle.")
-            selected = [json.loads(select_action_completion(row, seed, epoch, policy))["chosen_action_id"]
-                        for epoch in range(epochs)]
-            require(all(action_id in targets for action_id in selected), "An epoch selected an unacceptable target.")
-            for resume_epoch in range(epochs):
-                resumed = json.loads(select_action_completion(row, seed, resume_epoch, policy))["chosen_action_id"]
-                require(resumed == selected[resume_epoch], "Resumed epoch target differs from uninterrupted selection.")
-            require(len(set(selected)) == min(epochs, len(targets)), "Within-cycle epoch selection repeats too early.")
+            state_weight = math.fsum(item["supervised_weight"] for item in target_data)
+            require(math.isclose(state_weight, weight, rel_tol=1e-6, abs_tol=1e-8),
+                    "Expanded answers do not preserve their logical state's total loss weight.")
             if split == "train":
-                for epoch, action_id in enumerate(selected):
-                    epoch_lengths[epoch].append(target_lengths[action_id])
+                measured_train_weights.append(state_weight)
+                action_expanded_lengths.append(sum(item["input_tokens"] for item in target_data))
+                action_target_counts.append(len(target_data))
             checked_rows += 1
             if checked_rows % 1000 == 0:
                 print(f"Checked {checked_rows} action rows and {all_target_variants} acceptable target variants", flush=True)
@@ -187,12 +183,13 @@ def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None
             "num_action_rows": len(grouped[split]["action"]), "num_belief_rows": len(grouped[split]["belief"]),
             "groups": dict(groups), "target_set_sizes": dict(sorted(target_sizes.items())),
             "acceptable_target_variants_checked": action_target_variants,
-            "target_sets_larger_than_configured_epochs": target_sets_larger_than_epochs,
-            "target_sets_larger_than_three_epochs": target_sets_larger_than_three,
+            "each_state_contains_all_acceptable_targets": True,
         }
-        print(f"{split}: all action targets, belief masks and deterministic cycles checked", flush=True)
+        print(f"{split}: all target masks, per-state weight sums and belief masks checked", flush=True)
     require(math.isclose(math.fsum(effective_train_weights), len(effective_train_weights), rel_tol=1e-12),
             "Normalized action weights do not total the number of training states.")
+    require(math.isclose(math.fsum(measured_train_weights), len(effective_train_weights), rel_tol=1e-6),
+            "Expanded answer masks do not total the original action-state weight budget.")
 
     validation_action_tokens = 0
     validation_candidates = 0
@@ -209,17 +206,27 @@ def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None
     for epoch in range(epochs):
         per_task = {}
         for task_index, task in enumerate(("action", "belief")):
-            lengths = epoch_lengths[epoch] if task == "action" else canonical_lengths["train"]["belief"]
+            lengths = action_expanded_lengths if task == "action" else canonical_lengths["train"]["belief"]
             order = list(range(len(lengths)))
             random.Random(seed + 2 * epoch + task_index).shuffle(order)
             visits = [order[index % len(order)] for index in range(steps * half)]
-            per_task[task] = {"sequences": len(visits), "input_tokens": sum(lengths[index] for index in visits),
+            require(len(set(visits)) == len(lengths), "An epoch omitted a logical training state.")
+            expanded_count = sum(action_target_counts[index] for index in visits) if task == "action" else len(visits)
+            per_task[task] = {"logical_state_visits": len(visits), "expanded_sequences": expanded_count,
+                              "input_tokens": sum(lengths[index] for index in visits),
                               "cycled_extra_visits": len(visits) - len(set(visits))}
         epoch_stats.append({"epoch": epoch + 1, "optimizer_steps_if_run": steps,
+                            "all_training_states_and_their_targets_covered": True,
                             "tasks": per_task, "input_tokens": sum(item["input_tokens"] for item in per_task.values())})
     validation_belief_tokens = sum(canonical_lengths["val"]["belief"])
     accounting = {
         "balanced_training_tokens": sum(epoch["input_tokens"] for epoch in epoch_stats),
+        "training_optimizer_steps_per_epoch": steps,
+        "training_optimizer_steps": steps * epochs,
+        "training_logical_state_visits": {task: sum(epoch["tasks"][task]["logical_state_visits"] for epoch in epoch_stats)
+                                         for task in ("action", "belief")},
+        "training_expanded_sequences": {task: sum(epoch["tasks"][task]["expanded_sequences"] for epoch in epoch_stats)
+                                       for task in ("action", "belief")},
         "validation_action_candidate_sequences_per_epoch": validation_candidates,
         "validation_action_tokens_per_epoch": validation_action_tokens,
         "validation_belief_tokens_per_epoch": validation_belief_tokens,
@@ -237,7 +244,7 @@ def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None
             require(estimate.get(key) == value, f"Cost-estimate token accounting differs at {key}.")
         comparison = {"status": "matched", "path": str(estimate_path), "fields": list(accounting)}
     report = {
-        "status": "passed", "scope": "local schema, source identity, tokenizer, loss masks, target rotation and token accounting only",
+        "status": "passed", "scope": "local schema, source identity, tokenizer, all-answer masks, logical-state expansion and token accounting only",
         "contract": current_contract(), "run_dir": str(run_dir), "source_check": source_check,
         "model": config["base_model"], "tokenizer": type(tokenizer).__name__, "tokenizer_local_files_only": True,
         "hf_offline": True, "model_api_calls": 0, "model_forwards": 0, "optimizer_steps": 0,
@@ -245,11 +252,14 @@ def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None
         "policy": policy, "training_seed": seed, "configured_epochs": epochs,
         "samples_per_split": summary_by_split, "train_action_raw_weight_mean": train_mean,
         "train_action_effective_total_weight": math.fsum(effective_train_weights),
+        "train_expanded_answer_measured_total_weight": math.fsum(measured_train_weights),
+        "answer_weight_check": "train: raw_state_weight / train_mean / target_count; validation/test target-mask audit: 1 / target_count; actual validation forwards: unit weight per legal candidate",
         "belief_unit_weight_verified_for_all_rows": True,
         "belief_injected_action_metadata_checks": belief_action_metadata_checks,
         "belief_weight_override_rejections": belief_weight_rejection_checks,
-        "rotation_and_resume_deterministic": True,
-        "rotation_limit": "One full target cycle is verified locally; three training epochs need not visit every target when a set has more than three actions.",
+        "answer_expansion_deterministic": True,
+        "every_training_state_has_all_targets_each_epoch": True,
+        "optimizer_step_basis": "unchanged logical-state batches; answers expand inside each original batch",
         "all_acceptable_target_variants_checked": all_target_variants,
         "datum_builds_including_local_checks": datum_builds,
         "max_input_tokens_across_checked_variants": max_input_tokens,

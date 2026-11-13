@@ -89,6 +89,7 @@ class TestPrepareSupervision(unittest.TestCase):
         self.assertAlmostEqual(self.summary["training_action_raw_weight_mean"], 5 / 6)
         self.assertAlmostEqual(self.summary["training_action_weight_scale"], 6 / 5)
         self.assertEqual(self.summary["training_action_effective_total_weight"], 3)
+        self.assertEqual(self.summary["training_action_answer_sequences"], 4)
         self.assertEqual(self.summary["model_api_calls"], 0)
         self.assertEqual(validate_prepared_supervision_run(self.prepared, check_sources=True)["num_samples"], 18)
 

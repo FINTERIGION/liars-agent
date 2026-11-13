@@ -32,11 +32,12 @@ training:
   max_seq_length: 16384
   seed: 42
   action_supervision:
-    version: empirical_ties_weighted_actions_v1
+    version: empirical_all_answers_weighted_actions_v2
     positive_gap_weight: 0.5  # configured heuristic, not a probability/confidence
     tie_tolerance: 1.0e-12
     gap_threshold: 0.05
-    target_selection: seeded_cycle_per_observation_epoch
+    target_selection: all_acceptable_answers_per_state
+    answer_weighting: equal_share_of_state_weight
     action_weight_normalization: train_mean
     checkpoint_selection: val_action_set_nll
 

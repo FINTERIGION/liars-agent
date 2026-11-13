@@ -126,17 +126,17 @@ python scripts/audit_refined_labels.py \
 ```bash
 python scripts/prepare_action_supervision.py \
   --source-run outputs/runs/selfplay_v2_20261113_01_quality \
-  --output-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v1
+  --output-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v2
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/run_full_pipeline.py \
-  --config outputs/runs/selfplay_v2_20261113_01_quality_supervision_v1/config.json \
-  --output-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v1 --stage estimate
+  --config outputs/runs/selfplay_v2_20261113_01_quality_supervision_v2/config.json \
+  --output-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v2 --stage estimate
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/check_action_supervision.py \
-  --run-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v1
+  --run-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v2
 ```
 
-新目录保留全部样本、原始单答案、信念标签和按局划分，另外保存 `action_supervision` 描述及源文件哈希。其 `config.json` 和目录配套用于后续阶段。复评中间产物缺少新监督描述时，训练会要求先准备新目录；旧训练目标的 checkpoint/恢复进度在收费会话前拒绝。上述命令不创建 Tinker 服务会话，tokenizer 核验只使用本地缓存；不会运行训练。
+新目录保留全部样本、原始单答案、信念标签和按局划分，另外保存 `action_supervision` 描述及源文件哈希。其 `config.json` 和目录配套用于后续阶段。复评中间产物缺少新监督描述时，训练会要求先准备新目录；新监督目标版本为 `empirical_all_answers_weighted_actions_v2`；训练或恢复训练时，旧版轮换目标的数据、checkpoint/恢复进度在收费会话前拒绝，原 v1 目录保留为历史记录。上述命令不创建 Tinker 服务会话，tokenizer 核验只使用本地缓存；不会运行训练。
 
-本次 20,000 条样本的处理数量、检查结果和 token 计数见[本地验收记录](docs/action_supervision_validation.md)。
+本次 20,000 条样本的处理数量、检查结果和 token 计数见[本地验收记录](docs/all_answer_supervision_validation.md)。
 
 ## 方法与默认参数
 
@@ -146,9 +146,9 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/check_action_supervision.
 - **续玩教师：** 入口仅接受观测、固定教师配置和采样种子。隐藏牌与剩余实弹槽位按观测约束均匀采样；目标席位固定由 CardCounter 续玩，其他三席从 seen 三种策略各取一个随机排列，不读取真实局代理。每次续玩有独立策略随机种子，同次续玩的所有候选共享状态、排列和种子。
 - **教师目标：** `0.65 × 整局胜利 + 0.35 × 当前小局未受罚`。每动作 8 次续玩，最佳值相对候选均值的优势门槛 0.05。这是固定规则续玩下的代理收益，不是当前 LLM 的精确策略价值或胜率保证。
 - **数据：** 目标 10,000 条动作样本和 10,000 条独立信念样本。每批完整对局先按 80/10/10 约定划分，再提取两种任务；整个对局不跨集合，所有对局（含未通过动作筛选的对局）均有归属。短局不足时补充新批完整对局，直到达到目标或 max_games。分类器仅使用同一训练划分的信念样本。
-- **动作任务：** 模型每次仍输出严格 JSON `{"chosen_action_id":"A0"}`。保存教师实测均值最高的全部动作（浮点容差 `1e-12`），不把分差在 0.05 内的所有动作都当成正确答案。同一输入按固定种子排列答案，每个 epoch 轮换一个；短任务补齐和中断恢复不改变该 epoch 的选择，也不通过复制样本增加并列状态的权重。并列数超过 3 时，默认 3 epochs 不保证遍历全部答案。样本生成、收费训练前检查与推理复用同一校验器；Markdown 外壳和额外字段也属于非法协议。
+- **动作任务：** 模型每次仍输出严格 JSON `{"chosen_action_id":"A0"}`。保存教师实测均值最高的全部动作（浮点容差 `1e-12`），不把分差在 0.05 内的所有动作都当成正确答案。每次访问一个动作状态时，全部可接受答案都参与监督。若该状态有 k 个答案、有效权重为 w，每个答案分配 w/k，再平分到其回答 token；状态总权重保持 w。答案顺序固定，恢复后目标和权重不变，覆盖不再依赖 epoch 数。样本生成、收费训练前检查与推理复用同一校验器；Markdown 外壳和额外字段也属于非法协议。
 - **信念任务：** 事件为“上一手是否至少含一张假牌”。真实引擎标签监督单 token `0/1`，不只抽被质疑的牌，也不按动作收益筛选。推理从同一 checkpoint 的两个标签 log probability 归一化得到概率；无待回应声称时为 null，无信念调用。
-- **SFT：** 一个 LoRA 同时训练上述两任务。rank 16、attention/MLP 开启、unembedding 关闭；学习率 `2e-4`，batch 32 每任务 16 条，3 epochs。只有唯一最高分且正分差不超过 0.05 的动作样本取原始权重 0.5；其他样本取 1。动作权重仅按训练动作集合的原始均值归一，回答 token 平分该样本权重；信念标签权重始终为 1。0.5 是可配置的训练启发式，不代表置信概率。较短任务按固定种子循环，双任务期望总权重保持平衡。
+- **SFT：** 一个 LoRA 同时训练上述两任务。rank 16、attention/MLP 开启、unembedding 关闭；学习率 `2e-4`，batch 32 每任务 16 条，3 epochs。只有唯一最高分且正分差不超过 0.05 的动作样本取原始权重 0.5；其他样本取 1。动作状态权重仅按训练动作集合的原始均值归一，再均分到全部可接受答案；信念标签权重始终为 1。batch 32 指 16 个动作状态和 16 条信念样本，按状态采样后才展开答案。每个逻辑 batch 只做一次优化器更新，步数及学习率计划不随答案数增加。0.5 是可配置的训练启发式，不代表置信概率。较短任务按固定种子循环，双任务期望总权重保持平衡。
 - **训练验证：** 每个验证状态枚举所有合法 JSON 答案，用完整回答 token（含聊天模板结束符）的 log probability 之和计算序列概率。checkpoint 按未降权、每状态等权的 `val_action_set_nll = -log(sum P(可接受答案))` 选择；单答案退化为完整序列 NLL。另报告合法候选归一化后的集合概率、候选 argmax 集合命中率、教师估计后悔值、原单答案平均 token NLL，以及`clear`／`tied`／`small_gap` 分组的指标和样本数，空组为 null。候选命中率不是自由生成动作的合法率或对局胜率；教师未评分所选动作时后悔值不可估计。信念标签 CE 单独记录；归一化二分类 log loss、Brier、ECE 另行评测。
 - **RS：** 一轮，从 SFT 在训练侧新对局中的每状态 4 个候选筛选 2,000 条动作样本，排除回退候选，使用相同规则教师评分；另独立提取 2,000 条真实信念样本，不复制模型概率或理由为标签。从最佳 SFT 状态继续训练 1 epoch，学习率 `5e-5`；验证与测试保持隔离。
 - **画像与说明：** 记录公开主动质疑频率、平均出牌张数、被揭示诈唬比例及分母；这些统计不等于真实策略身份，身份字段为 unknown。容量先验和人工启发式仅供规则基线使用，不充当概率真值。“动作说明”来自可核对的事实模板，不冒充模型的内部推理。
@@ -159,7 +159,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/check_action_supervision.
 
 四类图表分别为胜率与 CI、历史消融、风险/手牌分层，以及信念校准与行为画像。只生成当前实际评测数据支持的图，不为未运行的模型填值。
 
-并列只表示有限续玩中的实测均值相同，不证明动作真正等价。epoch 轮换训练平均目标 NLL，checkpoint 集合 NLL 衡量可接受答案的总概率；两者不是同一损失。较大的答案集合更容易获得较低集合 NLL，因此比较使用固定验证集，并同时查看各组指标；不以分组难度差异宣称模型提升。
+并列只表示有限续玩中的实测均值相同，不证明动作真正等价。训练对每个状态的全部可接受答案计算平均 token NLL，checkpoint 集合 NLL 衡量可接受答案的总概率；两者不是同一损失。较大的答案集合更容易获得较低集合 NLL，因此比较使用固定验证集，并同时查看各组指标；不以分组难度差异宣称模型提升。
 
 ## 产物与成本
 
@@ -175,7 +175,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/check_action_supervision.
 | `experiment_summary.json` / `figures/` | 统一汇总及对应 SVG 图表 |
 | `ui_models.yaml` | 此次运行可用于界面的模型和分类器配置 |
 
-所有运行和其界面共用 `outputs/budget_usage.jsonl`，上限为本项目授权的 **5000 美元**。每次收费请求前按输入 token 和输出上限预留额度，收到响应后按 token 数结算估算；跨进程锁防止多个界面/任务重复占用额度。结果未知的失败请求保留预留，不自动重复计作免费调用。信念打分的 SDK 内部每次至多额外生成 1 token，两个打分请求按完整前缀加最多 2 个生成 token 保守记账，不假定缓存折扣；`completion_tokens` 仅计实际返回的动作输出，隐藏生成另记 `belief_completion_tokens_upper_bound`，账本标注上界。估算包含逐 epoch 答案轮换、双任务循环补齐的训练 token，以及每 epoch 全部合法验证候选和信念标签的 forward token；原单答案诊断复用候选结果，不重复调用。账本属于 token 费用估算，不是服务商账单；checkpoint 存储费用不包含在其中，正式运行时还需核对账号账单。费率快照来源为 [Tinker 官方价格](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)。
+所有运行和其界面共用 `outputs/budget_usage.jsonl`，上限为本项目授权的 **5000 美元**。每次收费请求前按输入 token 和输出上限预留额度，收到响应后按 token 数结算估算；跨进程锁防止多个界面/任务重复占用额度。结果未知的失败请求保留预留，不自动重复计作免费调用。信念打分的 SDK 内部每次至多额外生成 1 token，两个打分请求按完整前缀加最多 2 个生成 token 保守记账，不假定缓存折扣；`completion_tokens` 仅计实际返回的动作输出，隐藏生成另记 `belief_completion_tokens_upper_bound`，账本标注上界。估算包含全部可接受答案展开、按状态的双任务循环补齐所需的训练 token，以及每 epoch 全部合法验证候选和信念标签的 forward token；原单答案诊断复用候选结果，不重复调用。账本属于 token 费用估算，不是服务商账单；checkpoint 存储费用不包含在其中，正式运行时还需核对账号账单。费率快照来源为 [Tinker 官方价格](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)。
 
 LoRA 参数使用 [Tinker SDK 实际支持的接口](https://tinker-docs.thinkingmachines.ai/tinker/api-reference/serviceclient/)，checkpoint 默认持久保存。回放校验会逐步重建公开观测、隐藏手牌、真假标签、结算与终局；模型输出和时延只作为记录保存，不声称能由引擎重新生成。
 

@@ -15,8 +15,8 @@ from liars_agent.agents.prompt_builder import (SYSTEM_PROMPT, BELIEF_SYSTEM_PROM
 from liars_agent.contracts import current_contract, require_contract
 from liars_agent.engine.observation import PlayerObservation
 from liars_agent.training.action_supervision import (
-    mean_action_weight, normalize_action_policy, require_training_objective,
-    resolve_action_supervision, select_action_completion,
+    action_target_completions, mean_action_weight, normalize_action_policy,
+    require_training_objective, resolve_action_supervision,
 )
 from liars_agent.training.dataset_splitter import split_dataset_by_game_id
 from liars_agent.training.tinker_backend import TinkerBackend, resolve_future
@@ -63,7 +63,7 @@ def build_sft_datum(sample: dict[str, Any], backend: TinkerBackend, max_seq_leng
                     action_supervision_policy: dict | None = None) -> Any:
     """Weighted mean action-token NLL, or one unweighted binary belief label.
 
-    Legal action overrides serve both epoch target rotation and validation of all
+    Legal action overrides serve both all-answer supervision and validation of all
     candidates. They do not mutate the canonical sample or its supervision set.
     Default arguments retain canonical tokenization for read-only data checks.
     """
@@ -140,10 +140,11 @@ def run_tinker_lora_sft(
     train_attn: bool = True, train_mlp: bool = True, train_unembed: bool = False,
     action_supervision_policy: dict | None = None,
 ) -> dict[str, Any]:
-    """Use equal task counts per batch; cycle the shorter task within each epoch.
+    """Use equal state counts per batch; cycle the shorter task within each epoch.
 
-    Exact empirical ties rotate their targets deterministically by epoch. Action
-    weights are normalized by their training-set mean; belief retains weight one.
+    Every accepted action answer shares its state's effective weight equally.
+    State weights are normalized by their training-set mean; belief retains one.
+    Expanding action answers does not change optimizer steps or the LR schedule.
     Only unweighted action sequence-set validation NLL chooses the checkpoint.
     """
     if num_epochs < 1 or batch_size < 2 or batch_size % 2 or lora_rank < 1 or learning_rate <= 0:
@@ -178,7 +179,8 @@ def run_tinker_lora_sft(
         "num_epochs": num_epochs, "warmup_ratio": warmup_ratio, "stage": stage,
         "train_attn": train_attn, "train_mlp": train_mlp, "train_unembed": train_unembed,
         "checkpoint_ttl_seconds": checkpoint_ttl_seconds,
-        "task_balance": "equal_per_batch_cycle_shorter",
+        "task_balance": "equal_states_per_batch_cycle_shorter",
+        "logical_batch_task_counts": {"action": batch_size // 2, "belief": batch_size // 2},
         "action_supervision_policy": policy,
         "train_action_weight_mean": action_weight_mean,
         "checkpoint_selection": "val_action_set_nll",
@@ -200,30 +202,24 @@ def run_tinker_lora_sft(
     if backend.base_model != base_model:
         raise ValueError("Training model and backend model differ.")
 
-    def action_data_for_epoch(epoch: int) -> list[Any]:
-        return [build_sft_datum(row, backend, max_seq_length,
-                    completion_override=select_action_completion(row, seed, epoch, policy),
-                    sample_weight=resolve_action_supervision(row, policy)["loss_weight"] / action_weight_mean,
-                    action_supervision_policy=policy)
-                for row in grouped["train"]["action"]]
-
     start_epoch = int(progress.get("next_epoch", 0))
-    train_data = {"action": action_data_for_epoch(start_epoch),
-                  "belief": [build_sft_datum(row, backend, max_seq_length,
-                                action_supervision_policy=policy) for row in grouped["train"]["belief"]]}
+    # Keep original states as the sampling unit. All answers of a selected state
+    # enter the same optimizer step and collectively retain that state's weight.
+    action_data = []
+    for row in grouped["train"]["action"]:
+        completions = action_target_completions(row, policy)
+        answer_weight = (resolve_action_supervision(row, policy)["loss_weight"]
+                         / action_weight_mean / len(completions))
+        action_data.append([build_sft_datum(row, backend, max_seq_length,
+            completion_override=completion, sample_weight=answer_weight,
+            action_supervision_policy=policy) for completion in completions])
+    train_data = {"action": action_data,
+        "belief": [build_sft_datum(row, backend, max_seq_length,
+                    action_supervision_policy=policy) for row in grouped["train"]["belief"]]}
     val_beliefs = [build_sft_datum(row, backend, max_seq_length,
                     action_supervision_policy=policy) for row in grouped["val"]["belief"]]
-    # Check every answer we may actually use before starting a paid session.
-    # Later-epoch ties and noncanonical validation candidates can tokenize to
-    # different lengths; checking only the initial target would miss them.
-    for row in grouped["train"]["action"]:
-        checked = {select_action_completion(row, seed, start_epoch, policy)}
-        for epoch in range(start_epoch + 1, num_epochs):
-            completion = select_action_completion(row, seed, epoch, policy)
-            if completion not in checked:
-                build_sft_datum(row, backend, max_seq_length, completion_override=completion,
-                                action_supervision_policy=policy)
-                checked.add(completion)
+    # Every training answer is encoded above. Also check all noncanonical
+    # validation candidates before starting a paid session.
     # Lazy import lets the validator share the datum builder without a cycle.
     from liars_agent.training.action_validation import candidate_completion, evaluate_action_validation
     for row in grouped["val"]["action"]:
@@ -253,24 +249,34 @@ def run_tinker_lora_sft(
     best = progress.get("best", {})
     start_time = time.perf_counter()
     for epoch in range(start_epoch, num_epochs):
-        if epoch != start_epoch:
-            train_data["action"] = action_data_for_epoch(epoch)
         orders = {}
         for index, task in enumerate(("action", "belief")):
             orders[task] = list(range(len(train_data[task])))
             random.Random(seed + 2 * epoch + index).shuffle(orders[task])
         totals = {task: [0.0, 0.0] for task in ("action", "belief")}
+        sequence_counts = {task: 0 for task in ("action", "belief")}
         for local_step in range(steps_per_epoch):
-            batch = [train_data[task][orders[task][(local_step * half + offset) % len(orders[task])]]
-                     for task in ("action", "belief") for offset in range(half)]
+            selected = {task: [train_data[task][orders[task][(local_step * half + offset) % len(orders[task])]]
+                              for offset in range(half)] for task in ("action", "belief")}
+            task_batches = {"action": [datum for state in selected["action"] for datum in state],
+                            "belief": selected["belief"]}
+            batch = task_batches["action"] + task_batches["belief"]
             step = epoch * steps_per_epoch + local_step + 1
             result = backend.run_training_batch(client, batch, learning_rate=learning_rate * min(1, step / max(1, warmup_steps)))
-            for index, task in enumerate(("action", "belief")):
-                start, stop = index * half, (index + 1) * half
-                nll, count = batch_loss(SimpleNamespace(loss_fn_outputs=result.loss_fn_outputs[start:stop]), batch[start:stop])
+            if len(result.loss_fn_outputs) != len(batch):
+                raise RuntimeError("Tinker loss output count differs from expanded batch size.")
+            start = 0
+            for task in ("action", "belief"):
+                stop = start + len(task_batches[task])
+                nll, count = batch_loss(SimpleNamespace(loss_fn_outputs=result.loss_fn_outputs[start:stop]), task_batches[task])
                 totals[task][0] += nll
                 totals[task][1] += count
-        entry = {"epoch": epoch + 1, "step": (epoch + 1) * steps_per_epoch}
+                sequence_counts[task] += len(task_batches[task])
+                start = stop
+        entry = {"epoch": epoch + 1, "step": (epoch + 1) * steps_per_epoch,
+            "training_logical_state_visits": {task: steps_per_epoch * half for task in ("action", "belief")},
+            "training_expanded_sequences": sequence_counts,
+            "training_optimizer_steps": steps_per_epoch}
         for task in ("action", "belief"):
             entry[f"train_{task}_loss"] = totals[task][0] / totals[task][1]
         action_metrics = evaluate_action_validation(grouped["val"]["action"], backend, client,
@@ -309,6 +315,10 @@ def run_tinker_lora_sft(
         "lora_config": {"r": lora_rank, "train_mlp": train_mlp, "train_attn": train_attn, "train_unembed": train_unembed},
         "dataset_summary": {name: {task: len(rows) for task, rows in tasks.items()} for name, tasks in grouped.items()},
         "training_metrics": {**config, "total_steps": total_steps,
+            "training_optimizer_steps": total_steps,
+            "training_optimizer_steps_per_epoch": steps_per_epoch,
+            **{key: {task: sum(entry[key][task] for entry in loss_curve) for task in ("action", "belief")}
+               for key in ("training_logical_state_visits", "training_expanded_sequences")},
             "final_train_loss": loss_curve[-1]["train_loss"], "final_val_loss": loss_curve[-1]["val_loss"],
             "loss_curve": loss_curve},
         "cost_accounting": {**backend.ledger.snapshot(), "wall_time_sec": time.perf_counter() - start_time,

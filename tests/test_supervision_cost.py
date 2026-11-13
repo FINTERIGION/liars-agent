@@ -1,10 +1,12 @@
-"""Cost estimates must match the actual weighted, rotating training forwards.
+"""Cost estimates must match actual all-answer expanded training forwards.
 
 All service calls use the explicit local transport from the backend tests. The
 temporary ledger records mock tokens, never real model usage or research data.
 """
 from __future__ import annotations
 
+import json
+import math
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -22,14 +24,16 @@ from test_tinker_backend import SDK, Service, Tokenizer
 
 
 class TestSupervisionCost(unittest.TestCase):
-    def test_estimate_matches_rotated_training_and_every_validation_forward(self):
+    def test_estimate_matches_expanded_transport_and_unchanged_logical_steps(self):
         engine = LiarsBarEngine(game_seed=29)
         engine.step(engine.get_legal_actions()[0])
         observation = engine.get_observation()
         legal_ids = [action.action_id for action in observation.legal_actions]
-        # A0 and the final, multi-digit action have different lengths with the
-        # character tokenizer, so target rotation affects the token estimate.
+        # Different answer lengths and a four-target tie expose any remaining
+        # single-target-per-epoch accounting: all four must appear in one batch.
         self.assertGreater(len(legal_ids[-1]), len(legal_ids[0]))
+        tied_ids = {legal_ids[0], *legal_ids[-3:]}
+        self.assertEqual(len(tied_ids), 4)
 
         def sample(split, index, task, group=None):
             game_id = f"{split}-{index}"
@@ -42,7 +46,8 @@ class TestSupervisionCost(unittest.TestCase):
             values = {action_id: .1 for action_id in legal_ids}
             values[legal_ids[0]] = .8
             if group == "tied":
-                values[legal_ids[-1]] = .8
+                for action_id in tied_ids:
+                    values[action_id] = .8
             elif group == "small_gap":
                 values[legal_ids[1]] = .78
             row["action_supervision"] = make_action_supervision(row, values)
@@ -86,6 +91,44 @@ class TestSupervisionCost(unittest.TestCase):
             self.assertEqual(estimate["validation_action_candidate_sequences_per_epoch"],
                              len(legal_ids) * 2)
             self.assertEqual(service.training.train_calls, 6)  # ceil(3/2) steps x 3 epochs.
+            self.assertEqual(service.training.optim_calls, 6)
+            self.assertEqual(estimate["training_optimizer_steps_per_epoch"], 2)
+            self.assertEqual(estimate["training_optimizer_steps"], 6)
+            self.assertEqual(estimate["training_logical_state_visits"], {"action": 12, "belief": 12})
+            actual_expanded = {"action": 0, "belief": 0}
+            transport_tokens = 0
+            tied_state_visits = 0
+            for batch in service.training.batches:
+                tied_answers, singleton_actions, beliefs = [], 0, 0
+                for datum in batch:
+                    transport_tokens += len(datum.model_input.to_ints())
+                    weights = datum.loss_fn_inputs["weights"]
+                    targets = datum.loss_fn_inputs["target_tokens"]
+                    answer = backend.tokenizer.decode([token for token, weight in zip(targets, weights) if weight > 0])
+                    total_weight = sum(weights)
+                    if answer == "1":
+                        self.assertAlmostEqual(total_weight, 1.0)
+                        beliefs += 1
+                        actual_expanded["belief"] += 1
+                    else:
+                        action_id = json.loads(answer.removesuffix("<end>"))["chosen_action_id"]
+                        actual_expanded["action"] += 1
+                        if math.isclose(total_weight, (1 / (5 / 6)) / 4):
+                            tied_answers.append(action_id)
+                        else:
+                            self.assertTrue(math.isclose(total_weight, 1 / (5 / 6))
+                                            or math.isclose(total_weight, .5 / (5 / 6)))
+                            singleton_actions += 1
+                self.assertEqual(beliefs, 2)
+                self.assertIn(len(tied_answers), (0, 4))
+                if tied_answers:
+                    self.assertEqual(set(tied_answers), tied_ids)
+                    tied_state_visits += 1
+                self.assertEqual(singleton_actions + len(tied_answers) // 4, 2)
+            self.assertGreaterEqual(tied_state_visits, 3)  # At least once in each logical epoch.
+            self.assertEqual(actual_expanded, estimate["training_expanded_sequences"])
+            self.assertEqual(actual_expanded["action"], 12 + 3 * tied_state_visits)
+            self.assertEqual(transport_tokens, estimate["balanced_training_tokens"])
             self.assertAlmostEqual(metadata["training_metrics"]["train_action_weight_mean"], 5 / 6)
             self.assertAlmostEqual(backend.ledger.snapshot()["estimated_cost_usd"],
                                    estimate["sft_train_and_validation_usd"])

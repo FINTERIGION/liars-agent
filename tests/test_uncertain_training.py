@@ -15,7 +15,7 @@ from liars_agent.agents.prompt_builder import BELIEF_SYSTEM_PROMPT, build_bluff_
 from liars_agent.contracts import current_contract
 from liars_agent.engine.state import LiarsBarEngine
 from liars_agent.training.action_supervision import (
-    make_action_supervision, normalize_action_policy, select_action_completion,
+    action_target_completions, make_action_supervision, normalize_action_policy,
 )
 from liars_agent.training.data_generator import make_action_sample
 from liars_agent.training.tinker_backend import TinkerBackend
@@ -29,11 +29,21 @@ class SetPreferenceClient(TrainingClient):
         super().__init__()
         self.validation_epoch = 0
         self.fail_after_train_calls = None
+        self.learning_rates = []
 
     def forward_backward(self, data, loss_fn):
         if self.fail_after_train_calls is not None and self.train_calls >= self.fail_after_train_calls:
             raise RuntimeError("interrupted between completed epochs")
-        return super().forward_backward(data, loss_fn)
+        super().forward_backward(data, loss_fn)
+        # Distinct task losses expose slicing by the old, unexpanded half-size.
+        from types import SimpleNamespace
+        return SimpleNamespace(loss_fn_outputs=[{"logprobs": [-.7 if
+            sum(w > 0 for w in datum.loss_fn_inputs["weights"]) == 1 else -.4]
+            * len(datum.model_input.tokens)} for datum in data])
+
+    def optim_step(self, params):
+        self.learning_rates.append(params.learning_rate)
+        return super().optim_step(params)
 
     def forward(self, data, loss_fn):
         self.val_calls += 1
@@ -72,12 +82,15 @@ class TestUncertainTraining(unittest.TestCase):
         backend._tokenizer = Tokenizer()
         return backend, service
 
-    def action(self, game, group="tied", suffix=""):
+    def action(self, game, group="tied", suffix="", ties=2):
         row = make_action_sample(self.obs, self.obs.legal_actions[0], game)
         row["sample_id"] += suffix
         values = {a.action_id: .2 for a in self.obs.legal_actions}
         values["A0"] = .8
         values["A1"] = .8 if group == "tied" else (.78 if group == "small_gap" else .2)
+        if group == "tied":
+            for action in self.obs.legal_actions[:ties]:
+                values[action.action_id] = .8
         row["action_supervision"] = make_action_supervision(row, values, self.policy)
         return row
 
@@ -119,24 +132,68 @@ class TestUncertainTraining(unittest.TestCase):
         splits["train"].append(self.belief("train"))
         result = run_tinker_lora_sft([], self.path / "weighted", backend=self.backend,
                                     splits=splits, num_epochs=1, batch_size=2)
-        weights = [sum(batch[0].loss_fn_inputs["weights"]) for batch in self.service.training.batches]
+        weights = [sum(sum(datum.loss_fn_inputs["weights"]) for datum in batch[:-1])
+                   for batch in self.service.training.batches]
         for actual, expected in zip(sorted(weights), [.6, 1.2, 1.2]):
             self.assertAlmostEqual(actual, expected)
         self.assertAlmostEqual(sum(weights), 3.0)
-        self.assertTrue(all(sum(batch[1].loss_fn_inputs["weights"]) == 1.0
+        self.assertTrue(all(sum(batch[-1].loss_fn_inputs["weights"]) == 1.0
                             for batch in self.service.training.batches))
+        tied_batch = next(batch for batch in self.service.training.batches if len(batch) == 3)
+        self.assertEqual([self.action_answer(datum) for datum in tied_batch[:-1]], ["A0", "A1"])
+        for datum in tied_batch[:-1]:
+            self.assertAlmostEqual(sum(datum.loss_fn_inputs["weights"]), .6)
         self.assertAlmostEqual(result["training_metrics"]["train_action_weight_mean"], 5 / 6)
+        curve = result["training_metrics"]["loss_curve"][0]
+        self.assertAlmostEqual(curve["train_action_loss"], .4)
+        self.assertAlmostEqual(curve["train_belief_loss"], .7)
+        self.assertEqual(curve["training_logical_state_visits"], {"action": 3, "belief": 3})
+        self.assertEqual(curve["training_expanded_sequences"], {"action": 4, "belief": 3})
 
-    def test_tied_target_rotates_by_epoch_but_short_pool_reuses_same_target(self):
+    def test_four_and_five_answers_are_all_supervised_at_every_state_visit(self):
+        for ties in (4, 5):
+            with self.subTest(ties=ties):
+                backend, service = self.new_backend(f"coverage_{ties}")
+                splits = self.splits()
+                splits["train"][0] = self.action("train", ties=ties)
+                splits["train"] += [self.belief("train", str(i)) for i in range(3)]
+                result = run_tinker_lora_sft([], self.path / f"all_{ties}", backend=backend,
+                    splits=splits, num_epochs=3, batch_size=2, seed=91)
+                self.assertEqual(len(service.training.batches), 12)
+                for batch in service.training.batches:
+                    self.assertEqual([self.action_answer(datum) for datum in batch[:-1]],
+                                     [f"A{i}" for i in range(ties)])
+                    for datum in batch[:-1]:
+                        self.assertAlmostEqual(sum(datum.loss_fn_inputs["weights"]), 1 / ties)
+                    self.assertAlmostEqual(sum(sum(d.loss_fn_inputs["weights"]) for d in batch[:-1]), 1)
+                    self.assertEqual(sum(batch[-1].loss_fn_inputs["weights"]), 1)
+                metrics = result["training_metrics"]
+                self.assertEqual(metrics["training_logical_state_visits"], {"action": 12, "belief": 12})
+                self.assertEqual(metrics["training_expanded_sequences"], {"action": 12 * ties, "belief": 12})
+                self.assertEqual(metrics["training_optimizer_steps"], 12)
+
+    def test_default_logical_batch_and_optimizer_schedule_do_not_expand(self):
         splits = self.splits()
-        splits["train"] += [self.belief("train", str(i)) for i in range(3)]
-        run_tinker_lora_sft([], self.path / "rotated", backend=self.backend,
-                            splits=splits, num_epochs=2, batch_size=2, seed=91)
-        actual = [self.action_answer(batch[0]) for batch in self.service.training.batches]
-        expected = [json.loads(select_action_completion(splits["train"][0], 91, epoch, self.policy))["chosen_action_id"]
-                    for epoch in range(2)]
-        self.assertNotEqual(expected[0], expected[1])
-        self.assertEqual(actual, [expected[0]] * 4 + [expected[1]] * 4)
+        splits["train"][0] = self.action("train", ties=5)
+        splits["train"] += [self.belief("train", str(i)) for i in range(16)]
+        rate = 2e-4
+        result = run_tinker_lora_sft([], self.path / "logical_batch", backend=self.backend,
+            splits=splits, num_epochs=3, learning_rate=rate, warmup_ratio=.5)
+        self.assertEqual(self.service.training.train_calls, 6)
+        self.assertEqual(self.service.training.optim_calls, 6)
+        for batch in self.service.training.batches:
+            self.assertEqual(len(batch), 16 * 5 + 16)
+            self.assertEqual([self.action_answer(d) for d in batch[:80]], [f"A{i}" for i in range(5)] * 16)
+            self.assertAlmostEqual(sum(sum(d.loss_fn_inputs["weights"]) for d in batch[:80]), 16)
+            self.assertEqual(sum(sum(d.loss_fn_inputs["weights"]) for d in batch[80:]), 16)
+        for actual, fraction in zip(self.service.training.learning_rates, (1/3, 2/3, 1, 1, 1, 1)):
+            self.assertAlmostEqual(actual, rate * fraction)
+        metrics = result["training_metrics"]
+        self.assertEqual(metrics["logical_batch_task_counts"], {"action": 16, "belief": 16})
+        self.assertEqual(metrics["training_optimizer_steps_per_epoch"], 2)
+        self.assertEqual(metrics["training_optimizer_steps"], 6)
+        self.assertEqual(metrics["training_logical_state_visits"], {"action": 96, "belief": 96})
+        self.assertEqual(metrics["training_expanded_sequences"], {"action": 480, "belief": 96})
 
     def test_set_nll_selects_checkpoint_when_canonical_nll_prefers_other_epoch(self):
         result = run_tinker_lora_sft([], self.path / "selected", backend=self.backend,
@@ -153,25 +210,29 @@ class TestUncertainTraining(unittest.TestCase):
             self.assertEqual(epoch["val_loss"], epoch["val_action_set_nll"])
             self.assertIn("subgroups", epoch["action_validation"])
 
-    def test_epoch_resume_reproduces_target_rotation_and_weights(self):
+    def test_epoch_resume_reproduces_state_order_all_answers_weights_and_lr(self):
         splits = self.splits()
-        splits["train"].append(self.belief("train", "extra"))
+        splits["train"] += [self.action("train", "clear", "clear"),
+                            self.action("train", "small_gap", "small"),
+                            self.belief("train", "extra")]
         uninterrupted, reference_service = self.new_backend("reference")
-        run_tinker_lora_sft([], self.path / "reference_model", backend=uninterrupted,
-                            splits=splits, num_epochs=3, batch_size=2, seed=23)
-        self.service.training.fail_after_train_calls = 2
+        reference = run_tinker_lora_sft([], self.path / "reference_model", backend=uninterrupted,
+                            splits=splits, num_epochs=3, batch_size=2, seed=23, warmup_ratio=.5)
+        self.service.training.fail_after_train_calls = 3
         with self.assertRaisesRegex(RuntimeError, "interrupted"):
             run_tinker_lora_sft([], self.path / "resumed", backend=self.backend,
-                                splits=splits, num_epochs=3, batch_size=2, seed=23)
+                                splits=splits, num_epochs=3, batch_size=2, seed=23, warmup_ratio=.5)
         self.service.training.fail_after_train_calls = None
         result = run_tinker_lora_sft([], self.path / "resumed", backend=self.backend,
-                                    splits=splits, num_epochs=3, batch_size=2, seed=23, resume=True)
+                                    splits=splits, num_epochs=3, batch_size=2, seed=23, resume=True, warmup_ratio=.5)
         self.assertEqual(self.service.resumed, [("tinker://run/weights/sft-epoch-1", True)])
-        expected = [(self.action_answer(batch[0]), batch[0].loss_fn_inputs["weights"])
+        expected = [[(d.model_input.tokens, d.loss_fn_inputs) for d in batch]
                     for batch in reference_service.training.batches]
-        actual = [(self.action_answer(batch[0]), batch[0].loss_fn_inputs["weights"])
+        actual = [[(d.model_input.tokens, d.loss_fn_inputs) for d in batch]
                   for batch in self.service.training.batches]
         self.assertEqual(actual, expected)
+        self.assertEqual(self.service.training.learning_rates, reference_service.training.learning_rates)
+        self.assertEqual(result["training_metrics"], reference["training_metrics"])
         self.assertEqual(result["best_epoch"], 1)
 
     def test_missing_old_objective_is_rejected_before_preflight(self):
@@ -184,6 +245,22 @@ class TestUncertainTraining(unittest.TestCase):
             out = self.path / "old_progress"
             out.mkdir()
             (out / "training_progress.json").write_text(json.dumps({"contract": current_contract()}))
+            with self.assertRaisesRegex(ValueError, "supervision objective"):
+                run_tinker_lora_sft([], out, backend=self.backend, splits=self.splits(), resume=True)
+
+    def test_previous_epoch_rotation_objective_is_rejected_before_preflight(self):
+        old_policy = {**self.policy, "version": "empirical_ties_weighted_actions_v1",
+                      "target_selection": "seeded_cycle_per_observation_epoch"}
+        old_policy.pop("answer_weighting")
+        metadata = {"contract": current_contract(), "base_model": self.backend.base_model,
+            "state_path": "tinker://old/weights/sft", "action_supervision_policy": old_policy}
+        with patch.object(self.backend, "preflight", side_effect=AssertionError("API")):
+            with self.assertRaisesRegex(ValueError, "supervision objective"):
+                run_tinker_lora_sft([], self.path / "old_rotation", backend=self.backend,
+                    splits=self.splits(), resume_from=metadata["state_path"], resume_metadata=metadata)
+            out = self.path / "old_rotation_progress"
+            out.mkdir()
+            (out / "training_progress.json").write_text(json.dumps(metadata))
             with self.assertRaisesRegex(ValueError, "supervision objective"):
                 run_tinker_lora_sft([], out, backend=self.backend, splits=self.splits(), resume=True)
 
@@ -217,7 +294,7 @@ class TestUncertainTraining(unittest.TestCase):
             preflight.assert_not_called()
         self.assertEqual(self.service.training.train_calls, 0)
 
-    def test_later_epoch_tied_targets_are_tokenized_before_preflight(self):
+    def test_every_tied_answer_is_tokenized_before_preflight_even_for_one_epoch(self):
         class LongAlternateTokenizer(Tokenizer):
             def apply_chat_template(self, messages, **kwargs):
                 text = super().apply_chat_template(messages, **kwargs)
@@ -226,9 +303,8 @@ class TestUncertainTraining(unittest.TestCase):
                 return text
         self.backend._tokenizer = LongAlternateTokenizer()
         splits = self.splits()
-        seed = next(seed for seed in range(20)
-                    if json.loads(select_action_completion(splits["train"][0], seed, 0, self.policy))["chosen_action_id"] == "A0")
-        # Validation has only A0, so the oversized A1 occurs only next epoch.
+        self.assertEqual(len(action_target_completions(splits["train"][0], self.policy)), 2)
+        # Validation has only A0; the oversized A1 belongs to training only.
         singleton_obs = replace(self.obs, legal_actions=self.obs.legal_actions[:1])
         val = make_action_sample(singleton_obs, singleton_obs.legal_actions[0], "val")
         val["action_supervision"] = make_action_supervision(val, {"A0": .8}, self.policy)
@@ -236,7 +312,7 @@ class TestUncertainTraining(unittest.TestCase):
         with patch.object(self.backend, "preflight") as preflight:
             with self.assertRaisesRegex(ValueError, "no JSON was truncated"):
                 run_tinker_lora_sft([], self.path / "long_next_epoch", backend=self.backend,
-                                    splits=splits, num_epochs=2, batch_size=2, seed=seed)
+                                    splits=splits, num_epochs=1, batch_size=2)
             preflight.assert_not_called()
         self.assertEqual(self.service.training.train_calls, 0)
 

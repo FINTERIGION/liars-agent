@@ -197,9 +197,10 @@ def make_backend(config: dict, output: Path):
 
 
 def estimate_cost(config: dict, output: Path) -> dict:
-    """Count actual rotated training targets and every validation candidate forward."""
+    """Count all accepted answers per state visit and every validation candidate."""
     from liars_agent.training.tinker_train import build_sft_datum
-    from liars_agent.training.action_supervision import normalize_action_policy, select_action_completion, mean_action_weight
+    from liars_agent.training.tinker_backend import PRICING_SOURCE, PRICING_DATE
+    from liars_agent.training.action_supervision import normalize_action_policy, action_target_completions, mean_action_weight
     from liars_agent.agents.prompt_builder import BELIEF_SYSTEM_PROMPT, build_bluff_user_prompt
     from liars_agent.engine.observation import PlayerObservation
     backend = make_backend(config, output)
@@ -236,14 +237,24 @@ def estimate_cost(config: dict, output: Path) -> dict:
         raise ValueError("Balanced training needs an even batch size.")
     steps = math.ceil(max(map(len, lengths["train"].values())) / half)
     training_tokens = 0
+    state_tokens, answer_counts = {}, {}
+    logical_visits = {task: 0 for task in ("action", "belief")}
+    expanded_sequences = {task: 0 for task in ("action", "belief")}
+    for task in ("action", "belief"):
+        state_tokens[task], answer_counts[task] = [], []
+        for row in grouped["train"][task]:
+            completions = action_target_completions(row, policy) if task == "action" else [None]
+            state_tokens[task].append(sum(token_length(row, answer) for answer in completions))
+            answer_counts[task].append(len(completions))
     for epoch in range(training["num_epochs"]):
         for index, task in enumerate(("action", "belief")):
             rows = grouped["train"][task]
-            sizes = [token_length(row, select_action_completion(row, training.get("seed", config["seed"]), epoch, policy))
-                     if task == "action" else token_length(row) for row in rows]
             order = list(range(len(rows)))
             random.Random(training.get("seed", config["seed"]) + 2 * epoch + index).shuffle(order)
-            training_tokens += sum(sizes[order[i % len(order)]] for i in range(steps * half))
+            visits = [order[i % len(order)] for i in range(steps * half)]
+            training_tokens += sum(state_tokens[task][i] for i in visits)
+            logical_visits[task] += len(visits)
+            expanded_sequences[task] += sum(answer_counts[task][i] for i in visits)
     from liars_agent.training.action_validation import candidate_completion
     validation_action_tokens = sum(token_length(row, candidate_completion(row, action["action_id"]))
         for row in grouped["val"]["action"] for action in row["observation"]["legal_actions"])
@@ -251,6 +262,11 @@ def estimate_cost(config: dict, output: Path) -> dict:
     validation_tokens = (validation_action_tokens + counts["val"]["belief"]) * training["num_epochs"]
     result = {"contract": current_contract(), "model": config["base_model"], "tokens_by_split_and_task": counts,
         "max_input_tokens": maximum, "balanced_training_tokens": training_tokens,
+        "training_logical_state_visits": logical_visits,
+        "training_expanded_sequences": expanded_sequences,
+        "training_optimizer_steps": steps * training["num_epochs"],
+        "training_optimizer_steps_per_epoch": steps,
+        "training_cost_basis": "state-based task-balanced batches; all accepted action answers at every state visit; one optimizer step per logical batch",
         "validation_tokens": validation_tokens,
         "action_supervision_policy": policy,
         "training_action_raw_weight_mean": mean_action_weight(grouped["train"]["action"], policy),
@@ -263,6 +279,7 @@ def estimate_cost(config: dict, output: Path) -> dict:
         "belief_scoring_max_usd_upper_bound_on_dataset": max(score_costs),
         "belief_scoring_accounting": "two complete prefills plus at most two generated tokens; no cache discount assumed",
         "rates_per_million_tokens": backend.rates, "budget": backend.ledger.snapshot(),
+        "pricing_source": PRICING_SOURCE, "pricing_date": PRICING_DATE,
         "scope": "SFT exact dataset token estimate; inference/RS trajectory volume remains to be estimated before paid execution."}
     write_json(output / "cost_estimate.json", result)
     return result

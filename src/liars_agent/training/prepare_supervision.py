@@ -88,9 +88,11 @@ def prepare_supervision_run(source_run: Path, output: Path, policy: dict | None 
         "training_action_raw_weight_mean":weight_mean,
         "training_action_weight_scale":1 / weight_mean,
         "training_action_effective_total_weight":len(train_actions),
+        "training_action_answer_sequences":sum(len(resolve_action_supervision(row, policy)["target_action_ids"])
+                                                for row in train_actions),
         "belief_weight":1.0, "canonical_labels_unchanged":True, "belief_data_unchanged":True,
         "game_partition_unchanged":True, "model_api_calls":0,
-        "interpretation":"Ties are empirical reward-mean ties, not proven equivalence. Small-gap weight is a configured heuristic. Epoch cycling optimizes mean target NLL; checkpoint set NLL scores total acceptable-answer mass."}
+        "interpretation":"Ties are empirical reward-mean ties, not proven equivalence. Small-gap weight is a configured heuristic. Every accepted answer receives w/k of its state's effective weight at each visit. Training averages token NLL over all answers; checkpoint set NLL scores total acceptable-answer mass."}
     summary = read_json(source_run / "dataset/data_summary.json")
     summary["action_supervision_summary"] = result
     write_json(output / "dataset/data_summary.json", summary)
@@ -157,6 +159,8 @@ def validate_prepared_supervision_run(output: Path, *, check_sources=False) -> d
     if (abs(summary["training_action_raw_weight_mean"] - mean) > 1e-12
             or abs(summary["training_action_weight_scale"] - 1 / mean) > 1e-12
             or summary["training_action_effective_total_weight"] != len(train)
+            or summary["training_action_answer_sequences"] != sum(len(resolve_action_supervision(row, policy)["target_action_ids"])
+                                                                 for row in train)
             or summary["belief_weight"] != 1.0):
         raise ValueError("Training weight normalization differs from training samples.")
     return {"status":"passed", "version":ACTION_SUPERVISION_VERSION, "num_samples":len(all_rows),
