@@ -96,6 +96,13 @@ def build_sft_datum(sample: dict[str, Any], backend: TinkerBackend, max_seq_leng
         if tokens[:len(prompt_tokens)] != prompt_tokens:
             raise ValueError("Training token boundary differs from the inference prompt.")
         completion_tokens = tokens[len(prompt_tokens):]
+        eos_id = getattr(tokenizer, "eos_token_id", None)
+        if type(eos_id) is not int or eos_id not in completion_tokens:
+            raise ValueError("Action chat template must contain an assistant EOS token.")
+        # Generation ends at this EOS. Template separators after it are not part
+        # of the generated answer and must not influence train or validation NLL.
+        completion_tokens = completion_tokens[:completion_tokens.index(eos_id) + 1]
+        tokens = prompt_tokens + completion_tokens
     if not completion_tokens:
         raise ValueError("SFT completion has no tokens.")
     if len(tokens) > max_seq_length:
@@ -128,6 +135,46 @@ def batch_loss(result: Any, data: list[Any]) -> tuple[float, float]:
     return total, count
 
 
+def select_diagnostic_rows(splits: dict[str, list[dict]], seed: int,
+                           samples_per_task: int = 64) -> dict[str, list[dict]]:
+    """One deterministic validation subset, shared by diagnostics and cost estimates."""
+    if type(samples_per_task) is not int or samples_per_task < 1:
+        raise ValueError("diagnostic_samples_per_task must be a positive integer.")
+    selected = {}
+    for task in ("action", "belief"):
+        rows = sorted((row for row in splits.get("val", []) if row["task"] == task),
+                      key=lambda row: row["sample_id"])
+        task_seed = int.from_bytes(hashlib.sha256(f"{seed}:validation_diagnostic:{task}".encode()).digest(), "big")
+        indices = sorted(random.Random(task_seed).sample(range(len(rows)), min(len(rows), samples_per_task)))
+        selected[task] = [rows[index] for index in indices]
+    return selected
+
+
+def training_diagnostic_plan(train_counts: dict[str, int], num_epochs: int, batch_size: int,
+                             diagnostic_steps: list[int] | tuple[int, ...] = (50, 100),
+                             max_train_steps: int | None = None) -> dict:
+    """Count optimizer steps by original states, never by expanded answers."""
+    if (type(num_epochs) is not int or num_epochs < 1 or type(batch_size) is not int
+            or batch_size < 2 or batch_size % 2
+            or any(type(train_counts.get(task)) is not int or train_counts[task] < 1
+                   for task in ("action", "belief"))):
+        raise ValueError("Use positive task counts/epochs and an even logical batch_size.")
+    if (not isinstance(diagnostic_steps, (list, tuple))
+            or any(type(step) is not int or step < 0 for step in diagnostic_steps)):
+        raise ValueError("diagnostic_steps must contain nonnegative integer optimizer steps.")
+    if max_train_steps is not None and (type(max_train_steps) is not int or max_train_steps < 1):
+        raise ValueError("max_train_steps must be a positive integer or None.")
+    per_epoch = math.ceil(max(train_counts.values()) / (batch_size // 2))
+    total = per_epoch * num_epochs
+    planned = total if max_train_steps is None else min(total, max_train_steps)
+    steps = {0, *(step for step in diagnostic_steps if step <= planned)}
+    if max_train_steps is not None:
+        steps.add(planned)
+    return {"total_steps": total, "steps_per_epoch": per_epoch, "planned_steps": planned,
+            "full_validation_epochs": planned // per_epoch,
+            "diagnostic_steps": sorted(steps), "is_trial": max_train_steps is not None}
+
+
 def run_tinker_lora_sft(
     samples: list[dict[str, Any]], output_dir: str | Path,
     base_model: str = "Qwen/Qwen3.5-9B", lora_rank: int = 16,
@@ -139,6 +186,8 @@ def run_tinker_lora_sft(
     resume: bool = False, stage: str = "sft", checkpoint_ttl_seconds: int | None = None,
     train_attn: bool = True, train_mlp: bool = True, train_unembed: bool = False,
     action_supervision_policy: dict | None = None,
+    diagnostic_steps: list[int] | tuple[int, ...] = (50, 100),
+    diagnostic_samples_per_task: int = 64, max_train_steps: int | None = None,
 ) -> dict[str, Any]:
     """Use equal state counts per batch; cycle the shorter task within each epoch.
 
@@ -147,11 +196,15 @@ def run_tinker_lora_sft(
     Expanding action answers does not change optimizer steps or the LR schedule.
     Only unweighted action sequence-set validation NLL chooses the checkpoint.
     """
-    if num_epochs < 1 or batch_size < 2 or batch_size % 2 or lora_rank < 1 or learning_rate <= 0:
+    if (num_epochs < 1 or batch_size < 2 or batch_size % 2 or type(lora_rank) is not int
+            or lora_rank < 1 or learning_rate <= 0
+            or any(type(flag) is not bool for flag in (train_attn, train_mlp, train_unembed))):
         raise ValueError("Use positive epochs/rank/rate and an even batch_size of at least 2.")
     if not 0 <= warmup_ratio < 1:
         raise ValueError("warmup_ratio must be in [0, 1).")
     policy = normalize_action_policy(action_supervision_policy)
+    lora_config = {"r": lora_rank, "train_mlp": train_mlp,
+                   "train_attn": train_attn, "train_unembed": train_unembed}
     # Validate every provided row, including test rows, before constructing an API backend.
     all_rows = samples + [row for rows in (splits or {}).values() for row in rows]
     for row in all_rows:
@@ -161,6 +214,10 @@ def run_tinker_lora_sft(
         require_training_objective(resume_metadata or {}, policy)
         if resume_metadata.get("state_path") != resume_from or resume_metadata.get("base_model") != base_model:
             raise ValueError("Source checkpoint metadata does not match its state path/model.")
+        source_lora = resume_metadata.get("lora_config")
+        if (source_lora != lora_config
+                or any(type(source_lora[key]) is not type(value) for key, value in lora_config.items())):
+            raise ValueError("Source checkpoint LoRA configuration differs from the requested rank/layers.")
     splits = splits if splits is not None else split_dataset_by_game_id(samples, train_ratio=.8, val_ratio=.1, seed=seed)
     grouped = {name: {task: [row for row in rows if row["task"] == task] for task in ("action", "belief")}
                for name, rows in splits.items()}
@@ -171,14 +228,23 @@ def run_tinker_lora_sft(
         if games.get(left, set()) & games.get(right, set()):
             raise ValueError(f"Game-level leakage between {left} and {right}.")
     action_weight_mean = mean_action_weight(grouped["train"]["action"], policy)
+    plan = training_diagnostic_plan({task: len(rows) for task, rows in grouped["train"].items()},
+                                   num_epochs, batch_size, diagnostic_steps, max_train_steps)
+    diagnostic_rows = select_diagnostic_rows(splits, seed, diagnostic_samples_per_task)
     fingerprint = hashlib.sha256(json.dumps(splits, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     out = Path(output_dir)
     progress_path = out / "training_progress.json"
+    if plan["is_trial"] and resume:
+        raise ValueError("Step-limited trials do not resume; use a fresh trial output directory.")
+    if (out / "trial_metadata.json").exists() or (plan["is_trial"] and (out / "adapter_metadata.json").exists()):
+        raise ValueError("Trials and formal adapters require separate, unused output directories.")
     config = {"base_model": base_model, "lora_rank": lora_rank, "learning_rate": learning_rate,
         "batch_size": batch_size, "seed": seed, "max_seq_length": max_seq_length,
         "num_epochs": num_epochs, "warmup_ratio": warmup_ratio, "stage": stage,
         "train_attn": train_attn, "train_mlp": train_mlp, "train_unembed": train_unembed,
         "checkpoint_ttl_seconds": checkpoint_ttl_seconds,
+        "diagnostic_steps": list(diagnostic_steps), "diagnostic_samples_per_task": diagnostic_samples_per_task,
+        "max_train_steps": max_train_steps, "diagnostic_plan": plan,
         "task_balance": "equal_states_per_batch_cycle_shorter",
         "logical_batch_task_counts": {"action": batch_size // 2, "belief": batch_size // 2},
         "action_supervision_policy": policy,
@@ -218,6 +284,8 @@ def run_tinker_lora_sft(
                     action_supervision_policy=policy) for row in grouped["train"]["belief"]]}
     val_beliefs = [build_sft_datum(row, backend, max_seq_length,
                     action_supervision_policy=policy) for row in grouped["val"]["belief"]]
+    diagnostic_beliefs = [build_sft_datum(row, backend, max_seq_length,
+                    action_supervision_policy=policy) for row in diagnostic_rows["belief"]]
     # Every training answer is encoded above. Also check all noncanonical
     # validation candidates before starting a paid session.
     # Lazy import lets the validator share the datum builder without a cycle.
@@ -242,12 +310,44 @@ def run_tinker_lora_sft(
             for row in rows:
                 stream.write(json.dumps(row, ensure_ascii=False) + "\n")
     half = batch_size // 2
-    steps_per_epoch = math.ceil(max(len(rows) for rows in train_data.values()) / half)
-    total_steps = steps_per_epoch * num_epochs
+    steps_per_epoch = plan["steps_per_epoch"]
+    total_steps = plan["total_steps"]
     warmup_steps = math.ceil(total_steps * warmup_ratio)
     loss_curve = progress.get("loss_curve", [])
     best = progress.get("best", {})
+    diagnostics = progress.get("diagnostics", [])
+    subset = {"seed": seed, "source_split": "val", "samples_per_task": diagnostic_samples_per_task,
+              "sample_ids": {task: [row["sample_id"] for row in rows] for task, rows in diagnostic_rows.items()}}
+    completed_steps = start_epoch * steps_per_epoch
+    logical_visits = {task: sum(entry["training_logical_state_visits"][task] for entry in loss_curve)
+                      for task in ("action", "belief")}
+    expanded_sequences = {task: sum(entry["training_expanded_sequences"][task] for entry in loss_curve)
+                          for task in ("action", "belief")}
     start_time = time.perf_counter()
+
+    def belief_validation(data: list[Any]) -> float:
+        nll_total = weight_total = 0.0
+        for offset in range(0, len(data), batch_size):
+            batch = data[offset:offset + batch_size]
+            nll, count = batch_loss(backend.run_training_batch(client, batch, learning_rate=None), batch)
+            nll_total += nll
+            weight_total += count
+        return nll_total / weight_total
+
+    def diagnose(step: int) -> None:
+        if step not in plan["diagnostic_steps"] or any(row["step"] == step for row in diagnostics):
+            return
+        action = evaluate_action_validation(diagnostic_rows["action"], backend, client,
+                                             batch_size, max_seq_length, policy)
+        diagnostics.append({"step": step, "action_validation": action,
+            "val_action_set_nll": action["action_set_nll"],
+            "val_belief_loss": belief_validation(diagnostic_beliefs),
+            "used_for_checkpoint_selection": False})
+        _write_json(out / "training_diagnostics.json", {"subset": subset, "records": diagnostics})
+
+    if start_epoch == 0:
+        diagnose(0)
+    partial_epoch = None
     for epoch in range(start_epoch, num_epochs):
         orders = {}
         for index, task in enumerate(("action", "belief")):
@@ -272,7 +372,17 @@ def run_tinker_lora_sft(
                 totals[task][0] += nll
                 totals[task][1] += count
                 sequence_counts[task] += len(task_batches[task])
+                logical_visits[task] += half
+                expanded_sequences[task] += len(task_batches[task])
                 start = stop
+            completed_steps = step
+            diagnose(step)
+            if step == plan["planned_steps"]:
+                break
+        if local_step + 1 < steps_per_epoch:
+            partial_epoch = {"epoch": epoch + 1, "completed_steps_in_epoch": local_step + 1,
+                **{f"train_{task}_loss": totals[task][0] / totals[task][1] for task in ("action", "belief")}}
+            break
         entry = {"epoch": epoch + 1, "step": (epoch + 1) * steps_per_epoch,
             "training_logical_state_visits": {task: steps_per_epoch * half for task in ("action", "belief")},
             "training_expanded_sequences": sequence_counts,
@@ -285,13 +395,7 @@ def run_tinker_lora_sft(
         entry["val_action_set_nll"] = action_metrics["action_set_nll"]
         entry["val_action_canonical_token_nll"] = action_metrics["canonical_mean_token_nll"]
         entry["val_action_loss"] = entry["val_action_set_nll"]
-        nll_total = weight_total = 0.0
-        for offset in range(0, len(val_beliefs), batch_size):
-            batch = val_beliefs[offset:offset + batch_size]
-            nll, count = batch_loss(backend.run_training_batch(client, batch, learning_rate=None), batch)
-            nll_total += nll
-            weight_total += count
-        entry["val_belief_loss"] = nll_total / weight_total
+        entry["val_belief_loss"] = belief_validation(val_beliefs)
         entry["train_loss"] = (entry["train_action_loss"] + entry["train_belief_loss"]) / 2
         entry["val_loss"] = entry["val_action_set_nll"]
         loss_curve.append(entry)
@@ -301,28 +405,46 @@ def run_tinker_lora_sft(
             best = {"epoch": epoch + 1, "val_loss": entry["val_action_set_nll"],
                     "metric": "val_action_set_nll",
                     "sampler_path": sampler.path, "state_path": state.path}
-        _write_json(progress_path, {"contract": current_contract(), "dataset_sha256": fingerprint,
-            "action_supervision_policy": policy,
-            "config": config, "next_epoch": epoch + 1, "resume_state_path": state.path,
-            "best": best, "loss_curve": loss_curve})
+        if not plan["is_trial"]:
+            _write_json(progress_path, {"contract": current_contract(), "dataset_sha256": fingerprint,
+                "action_supervision_policy": policy,
+                "config": config, "next_epoch": epoch + 1, "resume_state_path": state.path,
+                "best": best, "loss_curve": loss_curve, "diagnostics": diagnostics})
         _write_json(out / "loss_curve.json", loss_curve)
+        if completed_steps == plan["planned_steps"]:
+            break
+    trial_paths = None
+    if plan["is_trial"]:
+        state = resolve_future(client.save_state(name=f"{stage}-trial-step-{completed_steps}", ttl_seconds=checkpoint_ttl_seconds))
+        sampler = resolve_future(client.save_weights_for_sampler(name=f"{stage}-trial-step-{completed_steps}", ttl_seconds=checkpoint_ttl_seconds))
+        trial_paths = {"state_path": state.path, "sampler_path": sampler.path}
     metadata = {"contract": current_contract(), "adapter_name": f"qwen35_9b_liars_lora_{stage}",
         "base_model": base_model, "platform": "tinker", "backend": "tinker", "stage": stage,
         "action_supervision_policy": policy,
-        "tasks": ["action", "belief"], "sampler_path": best["sampler_path"], "state_path": best["state_path"],
-        "best_epoch": best["epoch"], "best_val_loss": best["val_loss"],
+        "training_status": "trial_complete" if plan["is_trial"] else "complete",
+        "max_train_steps": max_train_steps,
+        "formal_training_complete": not plan["is_trial"],
+        "tasks": ["action", "belief"],
+        **(trial_paths or {"sampler_path": best["sampler_path"], "state_path": best["state_path"]}),
+        "best_epoch": None if plan["is_trial"] else best.get("epoch"),
+        "best_val_loss": None if plan["is_trial"] else best.get("val_loss"),
+        "full_validation_best": best or None,
+        "checkpoint_role": "trial_final_step" if plan["is_trial"] else "full_validation_best",
+        "early_diagnostics": {"subset": subset, "records": diagnostics},
         "dataset_sha256": fingerprint, "source_state_path": resume_from,
-        "lora_config": {"r": lora_rank, "train_mlp": train_mlp, "train_attn": train_attn, "train_unembed": train_unembed},
+        "lora_config": lora_config,
         "dataset_summary": {name: {task: len(rows) for task, rows in tasks.items()} for name, tasks in grouped.items()},
-        "training_metrics": {**config, "total_steps": total_steps,
-            "training_optimizer_steps": total_steps,
+        "training_metrics": {**config, "total_steps": total_steps, "completed_steps": completed_steps,
+            "training_optimizer_steps": completed_steps,
             "training_optimizer_steps_per_epoch": steps_per_epoch,
-            **{key: {task: sum(entry[key][task] for entry in loss_curve) for task in ("action", "belief")}
-               for key in ("training_logical_state_visits", "training_expanded_sequences")},
-            "final_train_loss": loss_curve[-1]["train_loss"], "final_val_loss": loss_curve[-1]["val_loss"],
+            "training_logical_state_visits": logical_visits, "training_expanded_sequences": expanded_sequences,
+            "full_validation_epochs": len(loss_curve), "partial_epoch_metrics": partial_epoch,
+            "final_train_loss": ((partial_epoch["train_action_loss"] + partial_epoch["train_belief_loss"]) / 2
+                if partial_epoch else loss_curve[-1]["train_loss"]),
+            "final_val_loss": loss_curve[-1]["val_loss"] if loss_curve else None,
             "loss_curve": loss_curve},
         "cost_accounting": {**backend.ledger.snapshot(), "wall_time_sec": time.perf_counter() - start_time,
                             "rates_per_million_tokens": backend.rates},
         "checkpoint_ttl_seconds": checkpoint_ttl_seconds}
-    _write_json(out / "adapter_metadata.json", metadata)
+    _write_json(out / ("trial_metadata.json" if plan["is_trial"] else "adapter_metadata.json"), metadata)
     return metadata

@@ -2,6 +2,8 @@
 
 日期：2026-11-14。方法版本：`empirical_all_answers_weighted_actions_v2`。
 
+此页保留 v2 历史验收结果。当前 EOS 边界、早期验证、残局补充和成本结果见 [v3 训练前修正验收](training_readiness_validation.md)；本页旧 token 和费用数字不用于当前训练。
+
 所有并列答案现在在每次访问其状态时共同参与监督，每个答案分到状态有效权重的 `1/k`。保持 3 epochs、原逻辑 batch 和优化器步数。本次完成实现、数据准备、离线检查和费用估算；模型 API、模型 forward 和实际优化器调用均为 0，尚未执行付费训练。
 
 ## 训练方式

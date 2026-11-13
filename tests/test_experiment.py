@@ -24,6 +24,23 @@ def small_config():
 
 
 class TestExperimentIntegration(unittest.TestCase):
+    def test_trial_is_separate_and_does_not_mark_formal_training_complete(self):
+        config = small_config()
+        with TemporaryDirectory() as directory:
+            output = Path(directory)
+            experiment.generate_data(config, output)
+            with patch.object(experiment, 'make_backend', return_value=object()), \
+                 patch('liars_agent.training.tinker_train.run_tinker_lora_sft', return_value={}) as train:
+                status = experiment.run_pipeline(config, output, 'sft_trial', max_train_steps=3)
+            self.assertEqual(train.call_args.kwargs['max_train_steps'], 3)
+            self.assertEqual(train.call_args.kwargs['output_dir'], output / 'models/sft_trial')
+            self.assertEqual(train.call_args.kwargs['diagnostic_steps'], [50, 100])
+            self.assertEqual(status['stages']['sft_trial'], 'trial_complete')
+            self.assertNotIn('sft', status['stages'])
+            self.assertEqual(status['real_experiments'], 'pending')
+            with self.assertRaisesRegex(ValueError, 'requires sft_trial'):
+                experiment.run_pipeline(config, output, 'sft', max_train_steps=3)
+
     def test_complete_local_pipeline_and_cached_resume_never_construct_backend(self):
         config = small_config()
         with TemporaryDirectory() as directory:

@@ -1,0 +1,550 @@
+{
+  "date": "2026-11-14",
+  "run_directory": "outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3_endgame",
+  "model_api_calls": 0,
+  "real_training_completed": false,
+  "tests": {
+    "passed": 161,
+    "subtests_passed": 101,
+    "command": ".venv/bin/python -m pytest -q"
+  },
+  "dataset_files_sha256": {
+    "config.json": "c62f28c366c639cdbc2cbd0dd75842a5041b5157889a00f9f8dc249f955e2ba9",
+    "dataset/train.jsonl": "71f81152d6f0e8bff46483a8929df81f067ba1b4a82128d7595ef848cf0c703e",
+    "dataset/val.jsonl": "43810e26b865cf37d93a93ba8c6d319c558d51ded4d03e5e4f4ebb4de40d2477",
+    "dataset/test.jsonl": "10e5f7f23b9526819fc51687b9d53186aabaf1e7dac7e0f76246b2fd1bc3c3bd",
+    "dataset/game_splits.json": "fd6a294b2f94f090364c6711745aef0c5a98cc7504adea6beab3b6d2e961b1ea",
+    "augmentation/replacements.jsonl": "edfc27cc13f63f7fc351a4d5ca84d2cce7bd2435b28e09036e63fd7144f48bc9",
+    "augmentation/added_actions.jsonl": "b1c9c75fe4646adec930ef95a75cd048a2f5b4120050b8589964d12a5bd24399"
+  },
+  "augmentation_verification": {
+    "status": "passed",
+    "contract": {
+      "rules_version": "liars_bar_research_v2",
+      "observation_version": "public_history_v2",
+      "teacher_version": "pool_prior_counter_continuation_v2",
+      "decision_schema_version": "action_and_binary_belief_v2",
+      "prompt_sha256": "e0b53df0f38b526e5c3c614457ba72a98a56187ee5fc24669adfd0d96e8cb78f"
+    },
+    "version": "training_endgame_coverage_v1",
+    "source_run": "/home/rxhgg/liars agent/liars-agent/outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3",
+    "num_samples": 20000,
+    "task_samples_per_split": {
+      "train": {
+        "action": 8000,
+        "belief": 7995
+      },
+      "val": {
+        "action": 1000,
+        "belief": 1002
+      },
+      "test": {
+        "action": 1000,
+        "belief": 1003
+      }
+    },
+    "num_replacements": 266,
+    "new_training_games": 37,
+    "supplemental_games_generated": 74,
+    "free_action_rows": 146,
+    "forced_action_rows": 120,
+    "total_teacher_candidate_continuations": 18688,
+    "coverage_matrix": [
+      {
+        "cell": "forced_challenge/alive_2/label_0",
+        "samples": 20,
+        "source_games": 12,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "forced_challenge/alive_2/label_1",
+        "samples": 20,
+        "source_games": 12,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "forced_challenge/alive_3/label_0",
+        "samples": 20,
+        "source_games": 12,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "forced_challenge/alive_3/label_1",
+        "samples": 20,
+        "source_games": 14,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "forced_challenge/alive_4/label_0",
+        "samples": 20,
+        "source_games": 11,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "forced_challenge/alive_4/label_1",
+        "samples": 20,
+        "source_games": 16,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "empty_claimer_free/alive_3/label_0",
+        "samples": 20,
+        "source_games": 12,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "empty_claimer_free/alive_3/label_1",
+        "samples": 20,
+        "source_games": 19,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "empty_claimer_free/alive_4/label_0",
+        "samples": 20,
+        "source_games": 13,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "empty_claimer_free/alive_4/label_1",
+        "samples": 20,
+        "source_games": 14,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "one_card_free/alive_2/label_0",
+        "samples": 20,
+        "source_games": 19,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "one_card_free/alive_2/label_1",
+        "samples": 20,
+        "source_games": 12,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "one_card_free/alive_3/label_0",
+        "samples": 22,
+        "source_games": 12,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "one_card_free/alive_3/label_1",
+        "samples": 35,
+        "source_games": 24,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "one_card_free/alive_4/label_0",
+        "samples": 22,
+        "source_games": 13,
+        "max_samples_per_game": 2
+      },
+      {
+        "cell": "one_card_free/alive_4/label_1",
+        "samples": 27,
+        "source_games": 14,
+        "max_samples_per_game": 2
+      }
+    ],
+    "source_preserved": true,
+    "all_saved_replays_verified": true,
+    "all_teacher_reports_recomputed": true,
+    "original_endgame_training_rows_preserved": true,
+    "belief_data_unchanged": true,
+    "validation_test_unchanged": true,
+    "independent_check_unchanged": true,
+    "overlapping_game_ids": 0,
+    "overlapping_environment_seeds": 0,
+    "overlapping_action_inputs": 0,
+    "training_action_raw_weight_mean": 0.927375,
+    "training_optimizer_steps": 1500,
+    "model_api_calls": 0,
+    "interpretation": "Action-only truth-balanced coverage; no inference or model performance was evaluated."
+  },
+  "supervision": {
+    "contract": {
+      "rules_version": "liars_bar_research_v2",
+      "observation_version": "public_history_v2",
+      "teacher_version": "pool_prior_counter_continuation_v2",
+      "decision_schema_version": "action_and_binary_belief_v2",
+      "prompt_sha256": "e0b53df0f38b526e5c3c614457ba72a98a56187ee5fc24669adfd0d96e8cb78f"
+    },
+    "version": "empirical_all_answers_weighted_actions_v3",
+    "policy": {
+      "version": "empirical_all_answers_weighted_actions_v3",
+      "positive_gap_weight": 0.5,
+      "tie_tolerance": 1e-12,
+      "gap_threshold": 0.05,
+      "target_selection": "all_acceptable_answers_per_state",
+      "answer_weighting": "equal_share_of_state_weight",
+      "action_ending": "first_assistant_eos_inclusive",
+      "action_weight_normalization": "train_mean",
+      "checkpoint_selection": "val_action_set_nll"
+    },
+    "samples_per_split": {
+      "train": {
+        "groups": {
+          "small_gap": 1162,
+          "tied": 2596,
+          "clear": 4122,
+          "unscored": 120
+        },
+        "target_set_sizes": {
+          "1": 5404,
+          "2": 1702,
+          "4": 69,
+          "3": 800,
+          "5": 25
+        }
+      },
+      "val": {
+        "groups": {
+          "small_gap": 150,
+          "clear": 515,
+          "tied": 335
+        },
+        "target_set_sizes": {
+          "1": 665,
+          "2": 214,
+          "3": 112,
+          "4": 9
+        }
+      },
+      "test": {
+        "groups": {
+          "clear": 501,
+          "tied": 360,
+          "small_gap": 139
+        },
+        "target_set_sizes": {
+          "1": 640,
+          "2": 232,
+          "3": 119,
+          "4": 6,
+          "5": 3
+        }
+      }
+    },
+    "training_action_raw_weight_mean": 0.927375,
+    "training_action_weight_scale": 1.0783124410297884,
+    "training_action_effective_total_weight": 8000,
+    "training_action_answer_sequences": 11609,
+    "belief_weight": 1.0,
+    "model_api_calls": 0,
+    "interpretation": "Independent action-only coverage replacement; all accepted answers share state weight; belief distribution unchanged."
+  },
+  "tokenizer_check": {
+    "status": "passed",
+    "policy": {
+      "version": "empirical_all_answers_weighted_actions_v3",
+      "positive_gap_weight": 0.5,
+      "tie_tolerance": 1e-12,
+      "gap_threshold": 0.05,
+      "target_selection": "all_acceptable_answers_per_state",
+      "answer_weighting": "equal_share_of_state_weight",
+      "action_ending": "first_assistant_eos_inclusive",
+      "action_weight_normalization": "train_mean",
+      "checkpoint_selection": "val_action_set_nll"
+    },
+    "all_acceptable_target_variants_checked": 14574,
+    "all_action_targets_stop_at_first_assistant_eos": true,
+    "belief_unit_weight_verified_for_all_rows": true,
+    "every_training_state_has_all_targets_each_epoch": true,
+    "train_action_effective_total_weight": 8000.0,
+    "train_expanded_answer_measured_total_weight": 8000.000171996653,
+    "max_input_tokens_across_checked_variants": 6257,
+    "max_complete_sequence_tokens": 6258,
+    "max_seq_length": 16384,
+    "model_api_calls": 0,
+    "model_forwards": 0,
+    "optimizer_steps": 0,
+    "training_completed": false,
+    "model_performance_evaluated": false
+  },
+  "cost_estimate_comparison": {
+    "status": "matched",
+    "fields": [
+      "balanced_training_tokens",
+      "training_optimizer_steps_per_epoch",
+      "training_optimizer_steps",
+      "training_logical_state_visits",
+      "training_expanded_sequences",
+      "validation_action_candidate_sequences_per_epoch",
+      "validation_action_tokens_per_epoch",
+      "validation_belief_tokens_per_epoch",
+      "full_validation_tokens",
+      "diagnostic_tokens",
+      "diagnostic_action_tokens_per_check",
+      "diagnostic_belief_tokens_per_check",
+      "validation_tokens",
+      "diagnostic_sample_ids",
+      "training_plan",
+      "tokens_by_split_and_task"
+    ]
+  },
+  "sft_estimate": {
+    "balanced_training_tokens": 119211076,
+    "full_validation_tokens": 72195399,
+    "diagnostic_tokens": 4449018,
+    "validation_tokens": 76644417,
+    "training_optimizer_steps": 1500,
+    "training_logical_state_visits": {
+      "action": 24000,
+      "belief": 24000
+    },
+    "training_expanded_sequences": {
+      "action": 34827,
+      "belief": 24000
+    },
+    "training_plan": {
+      "total_steps": 1500,
+      "steps_per_epoch": 500,
+      "planned_steps": 1500,
+      "full_validation_epochs": 3,
+      "diagnostic_steps": [
+        0,
+        50,
+        100
+      ],
+      "is_trial": false
+    },
+    "sft_train_and_validation_usd": 286.536586259,
+    "rates_per_million_tokens": {
+      "prefill": 0.3,
+      "sample": 0.807,
+      "train": 1.463
+    },
+    "pricing_date": "2026-11-14",
+    "pricing_source": "https://tinker-docs.thinkingmachines.ai/tinker/models.json",
+    "endgame_evaluation": {
+      "status": "estimated",
+      "path": "/home/rxhgg/liars agent/liars-agent/outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3_endgame/endgame_coverage",
+      "num_observations": 148,
+      "num_claim_observations": 133,
+      "prefill_tokens_per_llm": 1067453,
+      "generated_tokens_upper_bound_per_llm": 38154,
+      "usd_upper_bound_per_llm": 0.35102617799999997,
+      "usd_upper_bound_three_llms": 1.053078534,
+      "basis": "one action sample and two single-label score requests per claim; no cache discount; local baselines cost zero"
+    }
+  },
+  "five_step_trial_estimate": {
+    "balanced_training_tokens": 414721,
+    "full_validation_tokens": 0,
+    "diagnostic_tokens": 2966012,
+    "validation_tokens": 2966012,
+    "training_optimizer_steps": 5,
+    "training_logical_state_visits": {
+      "action": 80,
+      "belief": 80
+    },
+    "training_expanded_sequences": {
+      "action": 129,
+      "belief": 80
+    },
+    "training_plan": {
+      "total_steps": 1500,
+      "steps_per_epoch": 500,
+      "planned_steps": 5,
+      "full_validation_epochs": 0,
+      "diagnostic_steps": [
+        0,
+        5
+      ],
+      "is_trial": true
+    },
+    "sft_train_and_validation_usd": 4.946012379000001,
+    "rates_per_million_tokens": {
+      "prefill": 0.3,
+      "sample": 0.807,
+      "train": 1.463
+    },
+    "pricing_date": "2026-11-14",
+    "pricing_source": "https://tinker-docs.thinkingmachines.ai/tinker/models.json",
+    "endgame_evaluation": {
+      "status": "estimated",
+      "path": "/home/rxhgg/liars agent/liars-agent/outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3_endgame/endgame_coverage",
+      "num_observations": 148,
+      "num_claim_observations": 133,
+      "prefill_tokens_per_llm": 1067453,
+      "generated_tokens_upper_bound_per_llm": 38154,
+      "usd_upper_bound_per_llm": 0.35102617799999997,
+      "usd_upper_bound_three_llms": 1.053078534,
+      "basis": "one action sample and two single-label score requests per claim; no cache discount; local baselines cost zero"
+    }
+  },
+  "endgame_local_evaluation": {
+    "dataset": {
+      "num_samples": 148,
+      "num_claim": 133,
+      "num_no_claim": 15,
+      "input_sha256": "affb8b11a036ac000b97c000202250cb3fedc44142ff4f78f4e55287ebff27c7"
+    },
+    "natural_distribution": false,
+    "models": {
+      "small_classifier": {
+        "summary": {
+          "num_samples": 148,
+          "num_claim_samples": 133,
+          "num_no_claim_samples": 15,
+          "native_action_legal_count": 148,
+          "native_action_legal_rate": 1.0,
+          "returned_action_legal_count": 148,
+          "returned_action_legal_rate": 1.0,
+          "fallback_count": 0,
+          "fallback_rate": 0.0,
+          "returned_action_types": {
+            "CHALLENGE": 133,
+            "PLAY": 15
+          },
+          "forced_challenge": {
+            "num_samples": 60,
+            "native_compliance_count": 60,
+            "native_compliance_rate": 1.0,
+            "returned_compliance_count": 60,
+            "returned_compliance_rate": 1.0
+          },
+          "native_belief": {
+            "sources": {
+              "classifier": 133
+            },
+            "num_claim_samples": 133,
+            "num_valid_predictions": 133,
+            "calibration": {
+              "num_candidates": 133,
+              "num_samples": 133,
+              "coverage": 1.0,
+              "ece": 0.31526467985929607,
+              "brier_score": 0.33793221893588204,
+              "log_loss": 0.9443262749448481,
+              "log_loss_clip": 1e-15,
+              "bins": [
+                {
+                  "bin_low": 0.0,
+                  "bin_high": 0.2,
+                  "count": 0,
+                  "mean_predicted_prob": null,
+                  "empirical_bluff_freq": null
+                },
+                {
+                  "bin_low": 0.2,
+                  "bin_high": 0.4,
+                  "count": 0,
+                  "mean_predicted_prob": null,
+                  "empirical_bluff_freq": null
+                },
+                {
+                  "bin_low": 0.4,
+                  "bin_high": 0.6,
+                  "count": 0,
+                  "mean_predicted_prob": null,
+                  "empirical_bluff_freq": null
+                },
+                {
+                  "bin_low": 0.6,
+                  "bin_high": 0.8,
+                  "count": 20,
+                  "mean_predicted_prob": 0.7491294359026439,
+                  "empirical_bluff_freq": 0.45
+                },
+                {
+                  "bin_low": 0.8,
+                  "bin_high": 1.0,
+                  "count": 113,
+                  "mean_predicted_prob": 0.8667930416215354,
+                  "empirical_bluff_freq": 0.5486725663716814
+                }
+              ],
+              "weighting": "decision"
+            }
+          }
+        },
+        "usage": {
+          "api_calls": 0
+        }
+      },
+      "rule_counter": {
+        "summary": {
+          "num_samples": 148,
+          "num_claim_samples": 133,
+          "num_no_claim_samples": 15,
+          "native_action_legal_count": 148,
+          "native_action_legal_rate": 1.0,
+          "returned_action_legal_count": 148,
+          "returned_action_legal_rate": 1.0,
+          "fallback_count": 0,
+          "fallback_rate": 0.0,
+          "returned_action_types": {
+            "CHALLENGE": 125,
+            "PLAY": 23
+          },
+          "forced_challenge": {
+            "num_samples": 60,
+            "native_compliance_count": 60,
+            "native_compliance_rate": 1.0,
+            "returned_compliance_count": 60,
+            "returned_compliance_rate": 1.0
+          },
+          "native_belief": {
+            "sources": {
+              "heuristic": 133
+            },
+            "num_claim_samples": 133,
+            "num_valid_predictions": 133,
+            "calibration": {
+              "num_candidates": 133,
+              "num_samples": 133,
+              "coverage": 1.0,
+              "ece": 0.30162995400589376,
+              "brier_score": 0.3346987791408239,
+              "log_loss": 0.9489099234067405,
+              "log_loss_clip": 1e-15,
+              "bins": [
+                {
+                  "bin_low": 0.0,
+                  "bin_high": 0.2,
+                  "count": 0,
+                  "mean_predicted_prob": null,
+                  "empirical_bluff_freq": null
+                },
+                {
+                  "bin_low": 0.2,
+                  "bin_high": 0.4,
+                  "count": 0,
+                  "mean_predicted_prob": null,
+                  "empirical_bluff_freq": null
+                },
+                {
+                  "bin_low": 0.4,
+                  "bin_high": 0.6,
+                  "count": 5,
+                  "mean_predicted_prob": 0.5591999999999999,
+                  "empirical_bluff_freq": 0.2
+                },
+                {
+                  "bin_low": 0.6,
+                  "bin_high": 0.8,
+                  "count": 26,
+                  "mean_predicted_prob": 0.7471794871794871,
+                  "empirical_bluff_freq": 0.5384615384615384
+                },
+                {
+                  "bin_low": 0.8,
+                  "bin_high": 1.0,
+                  "count": 102,
+                  "mean_predicted_prob": 0.8715109530991884,
+                  "empirical_bluff_freq": 0.5490196078431373
+                }
+              ],
+              "weighting": "decision"
+            }
+          }
+        },
+        "usage": {
+          "api_calls": 0
+        }
+      }
+    }
+  }
+}

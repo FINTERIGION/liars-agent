@@ -34,6 +34,8 @@ class ModelInput:
 
 
 class Tokenizer:
+    eos_token_id = ord(">")
+
     def apply_chat_template(self, messages, *, tokenize, add_generation_prompt, **kwargs):
         text = "".join(f"<{m['role']}>{m['content']}" for m in messages)
         text += "<assistant>" if add_generation_prompt else "<end>"
@@ -96,9 +98,10 @@ class TrainingClient:
         # Action optimum is epoch 2, belief optimum is epoch 3.
         losses = ([.8, .3, .5], [.2, .9, .1])
         belief = sum(w > 0 for w in data[0].loss_fn_inputs["weights"]) == 1
+        # Diagnostics may run before/between full validation. Only a saved
+        # complete-epoch checkpoint advances this fake epoch-specific curve.
+        self.validation_epoch = sum("-epoch-" in name for name in self.saved_states)
         loss = losses[int(belief)][self.validation_epoch % 3]
-        if belief:
-            self.validation_epoch += 1
         self.val_calls += 1
         return self.output(data, loss)
 
@@ -263,7 +266,8 @@ class TestTinkerContracts(unittest.TestCase):
                 num_epochs=1, batch_size=2, resume_from=state)
         self.assertFalse(self.service.resumed)
         metadata = {"contract": current_contract(), "base_model": self.backend.base_model, "state_path": state,
-                    "action_supervision_policy": normalize_action_policy()}
+                    "action_supervision_policy": normalize_action_policy(),
+                    "lora_config": {"r": 16, "train_attn": True, "train_mlp": True, "train_unembed": False}}
         run_tinker_lora_sft([], self.path / "rs", backend=self.backend, splits=self.splits(),
                 num_epochs=1, batch_size=2, resume_from=state, resume_metadata=metadata, stage="rs")
         self.assertEqual(self.service.resumed, [(state, False)])
@@ -290,7 +294,9 @@ class TestTinkerContracts(unittest.TestCase):
         path = "tinker://run/sampler_weights/sft"
         results = self.backend.sample([{"role": "user", "content": "P"}], checkpoint=path,
                                       num_samples=2, max_tokens=256)
-        self.assertEqual(self.service.sampling_init, [{"model_path": path}])
+        self.assertEqual(len(self.service.sampling_init), 1)
+        self.assertEqual(self.service.sampling_init[0]["model_path"], path)
+        self.assertFalse(self.service.sampling_init[0]["retry_config"].enable_retry_logic)
         self.assertEqual(len(results), 2)
         usage = self.backend.ledger.snapshot()
         self.assertEqual(usage["prompt_tokens"], 2 * len("<user>P<assistant>"))
@@ -301,7 +307,9 @@ class TestTinkerContracts(unittest.TestCase):
         path = "tinker://run/sampler_weights/sft"
         result = self.backend.score_bluff([{"role": "user", "content": "P"}], checkpoint=path)
         self.assertAlmostEqual(result.probability, 1 / (1 + math.exp(-1)))
-        self.assertEqual(self.service.sampling_init, [{"model_path": path}])
+        self.assertEqual(len(self.service.sampling_init), 1)
+        self.assertEqual(self.service.sampling_init[0]["model_path"], path)
+        self.assertFalse(self.service.sampling_init[0]["retry_config"].enable_retry_logic)
         self.assertEqual([tokens[-1] for tokens, _ in self.service.sampling.logprob_calls], [ord("0"), ord("1")])
         self.assertTrue(all(n == 1 for _, n in self.service.sampling.logprob_calls))
         usage = self.backend.ledger.snapshot()
@@ -451,6 +459,10 @@ class TestTinkerContracts(unittest.TestCase):
             if task == "action":
                 full = tokenizer.apply_chat_template(messages + [{"role": "assistant", "content": sample["completion"]}],
                             tokenize=True, add_generation_prompt=False, enable_thinking=False, return_dict=False)
+                end = full.index(tokenizer.eos_token_id, len(prompt)) + 1
+                self.assertGreater(len(full), end)  # Real Qwen appends a separator after EOS.
+                full = full[:end]
+                self.assertEqual(datum.loss_fn_inputs["target_tokens"].tolist()[-1], tokenizer.eos_token_id)
             else:
                 full = prompt + tokenizer.encode(sample["completion"], add_special_tokens=False)
                 self.assertEqual(len(full), len(prompt) + 1)

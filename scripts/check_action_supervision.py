@@ -23,7 +23,8 @@ from liars_agent.training.action_supervision import (
 )
 from liars_agent.training.action_validation import candidate_completion
 from liars_agent.training.prepare_supervision import validate_prepared_supervision_run
-from liars_agent.training.tinker_train import build_sft_datum, validate_training_sample
+from liars_agent.training.tinker_train import (build_sft_datum, validate_training_sample,
+    select_diagnostic_rows, training_diagnostic_plan)
 
 SPLITS = ("train", "val", "test")
 
@@ -40,7 +41,12 @@ def as_list(value):
 def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None) -> dict:
     started = time.monotonic()
     run_dir = run_dir.resolve()
-    source_check = validate_prepared_supervision_run(run_dir, check_sources=True)
+    config = read_json(run_dir / "config.json")
+    if config["dataset"].get("endgame_augmentation"):
+        from liars_agent.training.endgame_augmentation import validate_endgame_augmented_run
+        source_check = validate_endgame_augmented_run(run_dir, check_sources=True)
+    else:
+        source_check = validate_prepared_supervision_run(run_dir, check_sources=True)
     print("Prepared schemas, stored targets and unchanged sources verified", flush=True)
     config = read_json(run_dir / "config.json")
     training = config["training"]
@@ -106,6 +112,12 @@ def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None
                     "Belief supervision must be one token with weight one.")
             require(targets[-1] == label_tokens[0] and weights[-1] == 1.0,
                     "Belief target or unit loss weight changed.")
+        else:
+            supervised_tokens = targets[prefix_length - 1:]
+            require(supervised_tokens[-1] == tokenizer.eos_token_id,
+                    "Action answer does not end at assistant EOS.")
+            require(tokenizer.eos_token_id not in supervised_tokens[:-1],
+                    "Action target contains tokens after its first EOS.")
         if len(input_tokens) > max_input_tokens:
             max_input_tokens = len(input_tokens)
             longest = {"sample_id": row["sample_id"], "task": row["task"],
@@ -219,6 +231,16 @@ def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None
                             "all_training_states_and_their_targets_covered": True,
                             "tasks": per_task, "input_tokens": sum(item["input_tokens"] for item in per_task.values())})
     validation_belief_tokens = sum(canonical_lengths["val"]["belief"])
+    plan = training_diagnostic_plan({task: len(rows) for task, rows in grouped["train"].items()},
+        epochs, batch_size, training.get("diagnostic_steps", [50, 100]))
+    diagnostics = select_diagnostic_rows(
+        {split: [row for task in tasks.values() for row in task] for split, tasks in grouped.items()},
+        seed, training.get("diagnostic_samples_per_task", 64))
+    diagnostic_action_tokens = sum(check_datum(row, candidate_completion(row, action["action_id"]))["input_tokens"]
+        for row in diagnostics["action"] for action in row["observation"]["legal_actions"])
+    diagnostic_belief_tokens = sum(check_datum(row)["input_tokens"] for row in diagnostics["belief"])
+    diagnostic_tokens = (diagnostic_action_tokens + diagnostic_belief_tokens) * len(plan["diagnostic_steps"])
+    full_validation_tokens = (validation_action_tokens + validation_belief_tokens) * epochs
     accounting = {
         "balanced_training_tokens": sum(epoch["input_tokens"] for epoch in epoch_stats),
         "training_optimizer_steps_per_epoch": steps,
@@ -230,7 +252,13 @@ def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None
         "validation_action_candidate_sequences_per_epoch": validation_candidates,
         "validation_action_tokens_per_epoch": validation_action_tokens,
         "validation_belief_tokens_per_epoch": validation_belief_tokens,
-        "validation_tokens": (validation_action_tokens + validation_belief_tokens) * epochs,
+        "full_validation_tokens": full_validation_tokens,
+        "diagnostic_tokens": diagnostic_tokens,
+        "diagnostic_action_tokens_per_check": diagnostic_action_tokens,
+        "diagnostic_belief_tokens_per_check": diagnostic_belief_tokens,
+        "validation_tokens": full_validation_tokens + diagnostic_tokens,
+        "diagnostic_sample_ids": {task: [row["sample_id"] for row in rows] for task, rows in diagnostics.items()},
+        "training_plan": plan,
         "tokens_by_split_and_task": {split: {task: sum(values) for task, values in tasks.items()}
                                       for split, tasks in canonical_lengths.items()},
     }
@@ -255,6 +283,7 @@ def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None
         "train_expanded_answer_measured_total_weight": math.fsum(measured_train_weights),
         "answer_weight_check": "train: raw_state_weight / train_mean / target_count; validation/test target-mask audit: 1 / target_count; actual validation forwards: unit weight per legal candidate",
         "belief_unit_weight_verified_for_all_rows": True,
+        "all_action_targets_stop_at_first_assistant_eos": True,
         "belief_injected_action_metadata_checks": belief_action_metadata_checks,
         "belief_weight_override_rejections": belief_weight_rejection_checks,
         "answer_expansion_deterministic": True,

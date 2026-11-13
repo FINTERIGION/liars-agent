@@ -19,7 +19,8 @@ from liars_agent.training.action_supervision import (
 )
 from liars_agent.training.data_generator import make_action_sample
 from liars_agent.training.tinker_backend import TinkerBackend
-from liars_agent.training.tinker_train import build_sft_datum, run_tinker_lora_sft, validate_training_sample
+from liars_agent.training.tinker_train import (build_sft_datum, run_tinker_lora_sft,
+    select_diagnostic_rows, training_diagnostic_plan, validate_training_sample)
 from test_tinker_backend import SDK, Service, Tokenizer, TrainingClient
 
 
@@ -47,10 +48,10 @@ class SetPreferenceClient(TrainingClient):
 
     def forward(self, data, loss_fn):
         self.val_calls += 1
+        self.validation_epoch = sum("-epoch-" in name for name in self.saved_states)
         belief = sum(w > 0 for w in data[0].loss_fn_inputs["weights"]) == 1
         if belief:
-            self.validation_epoch += 1
-            return self.output(data, .2 / self.validation_epoch)
+            return self.output(data, .2 / (self.validation_epoch + 1))
         outputs = []
         probabilities = ({"A0": .1, "A1": .6}, {"A0": .3, "A1": .05}, {"A0": .2, "A1": .2})
         for datum in data:
@@ -125,6 +126,110 @@ class TestUncertainTraining(unittest.TestCase):
         self.assertTrue(all(w > 0 for w in weights[len(prefix) - 1:]))
         with self.assertRaisesRegex(ValueError, "unweighted"):
             build_sft_datum(self.belief("train"), self.backend, 16384, sample_weight=.5)
+
+    def test_action_masks_stop_at_first_eos_and_missing_eos_fails(self):
+        row = self.action("train")
+        original = build_sft_datum(row, self.backend, 16384)
+        class TrailingTokenizer(Tokenizer):
+            def apply_chat_template(self, messages, **kwargs):
+                result = super().apply_chat_template(messages, **kwargs)
+                return result + "\nTEMPLATE_SEPARATOR<end>" if messages[-1]["role"] == "assistant" else result
+        self.backend._tokenizer = TrailingTokenizer()
+        actual = build_sft_datum(row, self.backend, 16384)
+        self.assertEqual(actual.loss_fn_inputs, original.loss_fn_inputs)
+        self.assertEqual(actual.model_input.tokens, original.model_input.tokens)
+        self.assertEqual(actual.loss_fn_inputs["target_tokens"][-1], self.backend.tokenizer.eos_token_id)
+        self.backend.tokenizer.eos_token_id = 999999
+        with self.assertRaisesRegex(ValueError, "assistant EOS"):
+            build_sft_datum(row, self.backend, 16384)
+
+    def test_diagnostic_plan_and_fixed_validation_subset(self):
+        plan = training_diagnostic_plan({"action": 17, "belief": 31}, 3, 32, [1, 5], 3)
+        self.assertEqual(plan, {"total_steps": 6, "steps_per_epoch": 2, "planned_steps": 3,
+            "full_validation_epochs": 1, "diagnostic_steps": [0, 1, 3], "is_trial": True})
+        full = training_diagnostic_plan({"action": 8000, "belief": 7995}, 3, 32)
+        self.assertEqual(full["diagnostic_steps"], [0, 50, 100])
+        self.assertEqual(full["total_steps"], 1500)
+        splits = self.splits()
+        splits["val"] = [row for index in range(8) for row in
+            (self.action("val", suffix=str(index)), self.belief("val", str(index)))]
+        selected = select_diagnostic_rows(splits, 19, 3)
+        reordered = {**splits, "val": list(reversed(splits["val"]))}
+        self.assertEqual(selected, select_diagnostic_rows(reordered, 19, 3))
+        self.assertEqual({task: len(rows) for task, rows in selected.items()}, {"action": 3, "belief": 3})
+        self.assertTrue(all(row["game_id"] == "val" for rows in selected.values() for row in rows))
+
+    def test_diagnostics_never_select_checkpoint_and_use_one_fixed_subset(self):
+        splits = self.splits()
+        splits["val"].append(self.action("val", suffix="extra"))
+        diagnostics_seen = []
+        def evaluate(rows, backend, client, *args):
+            if len(rows) == 1:
+                diagnostics_seen.append([row["sample_id"] for row in rows])
+                nll = .001  # Diagnostic would incorrectly win if treated as full validation.
+            else:
+                nll = 4 - client.train_calls
+            return {"action_set_nll": nll, "canonical_mean_token_nll": nll / 4,
+                    "num_samples": len(rows), "subgroups": {}}
+        with patch("liars_agent.training.action_validation.evaluate_action_validation", side_effect=evaluate):
+            result = run_tinker_lora_sft([], self.path / "diagnostics", backend=self.backend,
+                splits=splits, num_epochs=2, batch_size=2, diagnostic_steps=[1], diagnostic_samples_per_task=1)
+        self.assertEqual(result["best_epoch"], 2)
+        self.assertEqual(result["best_val_loss"], 2)
+        self.assertEqual(diagnostics_seen[0], diagnostics_seen[1])
+        records = result["early_diagnostics"]["records"]
+        self.assertEqual([row["step"] for row in records], [0, 1])
+        self.assertTrue(all(not row["used_for_checkpoint_selection"] for row in records))
+        self.assertEqual(self.service.training.saved_samplers, ["sft-best-epoch-1", "sft-best-epoch-2"])
+
+    def test_step_limited_trial_preserves_schedule_and_never_writes_formal_adapter(self):
+        splits = self.splits()
+        splits["train"] += [self.belief("train", str(i)) for i in range(2)]
+        out = self.path / "trial"
+        result = run_tinker_lora_sft([], out, backend=self.backend, splits=splits,
+            num_epochs=3, batch_size=2, learning_rate=2e-4, warmup_ratio=.5,
+            diagnostic_steps=[1, 50], max_train_steps=2, stage="sft_trial")
+        self.assertEqual(self.service.training.optim_calls, 2)
+        self.assertEqual(self.service.training.learning_rates, [2e-4 / 5, 2e-4 * 2 / 5])
+        self.assertEqual([row["step"] for row in result["early_diagnostics"]["records"]], [0, 1, 2])
+        self.assertEqual(result["training_metrics"]["training_expanded_sequences"], {"action": 4, "belief": 2})
+        self.assertEqual(result["training_metrics"]["training_logical_state_visits"], {"action": 2, "belief": 2})
+        self.assertEqual(result["training_metrics"]["full_validation_epochs"], 0)
+        self.assertEqual(result["max_train_steps"], 2)
+        self.assertFalse(result["formal_training_complete"])
+        self.assertIsNone(result["best_epoch"])
+        self.assertIsNone(result["training_metrics"]["final_val_loss"])
+        self.assertTrue(result["sampler_path"].endswith("sft_trial-trial-step-2"))
+        self.assertTrue((out / "trial_metadata.json").exists())
+        self.assertFalse((out / "adapter_metadata.json").exists())
+        self.assertFalse((out / "training_progress.json").exists())
+        with patch.object(self.backend, "preflight", side_effect=AssertionError("API")):
+            with self.assertRaisesRegex(ValueError, "separate"):
+                run_tinker_lora_sft([], out, backend=self.backend, splits=splits)
+
+    def test_source_lora_mismatch_is_rejected_before_backend_or_preflight(self):
+        source = {"contract": current_contract(), "base_model": self.backend.base_model,
+            "state_path": "tinker://source/weights/epoch", "action_supervision_policy": self.policy,
+            "lora_config": {"r": 16, "train_attn": True, "train_mlp": True, "train_unembed": False}}
+        for override in ({"lora_rank": 32}, {"train_attn": False}, {"train_mlp": False}, {"train_unembed": True}):
+            with self.subTest(override=override), patch("liars_agent.training.tinker_train.TinkerBackend") as constructor:
+                with self.assertRaisesRegex(ValueError, "LoRA configuration"):
+                    run_tinker_lora_sft([], self.path / "wrong_lora", splits=self.splits(),
+                        resume_from=source["state_path"], resume_metadata=source, **override)
+                constructor.assert_not_called()
+
+    def test_trial_reaching_full_epoch_retains_validation_but_stays_a_trial(self):
+        result = run_tinker_lora_sft([], self.path / "whole_epoch_trial", backend=self.backend,
+            splits=self.splits(), num_epochs=1, batch_size=2, max_train_steps=5, diagnostic_steps=[])
+        self.assertEqual(result["training_metrics"]["completed_steps"], 1)
+        self.assertEqual(result["training_metrics"]["full_validation_epochs"], 1)
+        self.assertEqual([row["step"] for row in result["early_diagnostics"]["records"]], [0, 1])
+        self.assertFalse(result["formal_training_complete"])
+        self.assertEqual(result["checkpoint_role"], "trial_final_step")
+        self.assertIsNone(result["best_epoch"])
+        self.assertEqual(result["full_validation_best"]["epoch"], 1)
+        self.assertTrue(result["sampler_path"].endswith("trial-step-1"))
+        self.assertTrue(result["full_validation_best"]["sampler_path"].endswith("best-epoch-1"))
 
     def test_small_gap_is_downweighted_then_action_mean_normalized(self):
         splits = self.splits()
@@ -282,7 +387,7 @@ class TestUncertainTraining(unittest.TestCase):
             def apply_chat_template(self, messages, **kwargs):
                 text = super().apply_chat_template(messages, **kwargs)
                 if messages[-1]["role"] == "assistant" and '"A1"' in messages[-1]["content"]:
-                    text += "X" * 20000
+                    text = text.removesuffix("<end>") + "X" * 20000 + "<end>"
                 return text
         self.backend._tokenizer = LongAlternateTokenizer()
         splits = self.splits()
@@ -299,7 +404,7 @@ class TestUncertainTraining(unittest.TestCase):
             def apply_chat_template(self, messages, **kwargs):
                 text = super().apply_chat_template(messages, **kwargs)
                 if messages[-1]["role"] == "assistant" and '"A1"' in messages[-1]["content"]:
-                    text += "X" * 20000
+                    text = text.removesuffix("<end>") + "X" * 20000 + "<end>"
                 return text
         self.backend._tokenizer = LongAlternateTokenizer()
         splits = self.splits()

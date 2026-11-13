@@ -63,7 +63,8 @@ class TestSupervisionCost(unittest.TestCase):
             "test": [sample("test", 0, "action", "clear"), sample("test", 0, "belief")],
         }
         config = experiment.load_config(experiment.DEFAULT_CONFIG)
-        config["training"].update(batch_size=4, num_epochs=3, seed=23)
+        config["training"].update(batch_size=4, num_epochs=3, seed=23,
+                                   diagnostic_steps=[1, 3], diagnostic_samples_per_task=1)
         with TemporaryDirectory() as temporary:
             path = Path(temporary)
             service = Service()
@@ -79,7 +80,8 @@ class TestSupervisionCost(unittest.TestCase):
             self.assertEqual(backend.ledger.snapshot()["estimated_cost_usd"], 0)
 
             metadata = run_tinker_lora_sft([], path / "model", splits=splits, backend=backend,
-                                           batch_size=4, num_epochs=3, seed=23)
+                                           batch_size=4, num_epochs=3, seed=23,
+                                           diagnostic_steps=[1, 3], diagnostic_samples_per_task=1)
             reservations, tokens = {}, {"train": 0, "validation": 0}
             for event in experiment.read_jsonl(path / "mock_budget.jsonl"):
                 if event["event"] == "reserve":
@@ -88,6 +90,10 @@ class TestSupervisionCost(unittest.TestCase):
                     tokens[reservations[event["request_id"]]] += event["usage"]["training_tokens"]
             self.assertEqual(tokens["train"], estimate["balanced_training_tokens"])
             self.assertEqual(tokens["validation"], estimate["validation_tokens"])
+            self.assertEqual(estimate["training_plan"]["diagnostic_steps"], [0, 1, 3])
+            self.assertGreater(estimate["diagnostic_tokens"], 0)
+            self.assertEqual(estimate["validation_tokens"],
+                             estimate["full_validation_tokens"] + estimate["diagnostic_tokens"])
             self.assertEqual(estimate["validation_action_candidate_sequences_per_epoch"],
                              len(legal_ids) * 2)
             self.assertEqual(service.training.train_calls, 6)  # ceil(3/2) steps x 3 epochs.
@@ -132,6 +138,23 @@ class TestSupervisionCost(unittest.TestCase):
             self.assertAlmostEqual(metadata["training_metrics"]["train_action_weight_mean"], 5 / 6)
             self.assertAlmostEqual(backend.ledger.snapshot()["estimated_cost_usd"],
                                    estimate["sft_train_and_validation_usd"])
+
+            # A bounded trial uses the same logical order/LR horizon and adds a
+            # final diagnostic, without executing or billing unused epochs.
+            trial_backend = TinkerBackend(budget_path=path / "mock_trial_budget.jsonl", sdk=SDK,
+                                           service_client=Service())
+            trial_backend._tokenizer = Tokenizer()
+            with patch.object(experiment, "make_backend", return_value=trial_backend):
+                trial_estimate = experiment.estimate_cost(config, path, max_train_steps=3)
+            trial = run_tinker_lora_sft([], path / "trial", splits=splits, backend=trial_backend,
+                batch_size=4, num_epochs=3, seed=23, diagnostic_steps=[1, 3],
+                diagnostic_samples_per_task=1, max_train_steps=3)
+            self.assertEqual(trial_estimate["training_optimizer_steps"], 3)
+            self.assertEqual(trial_estimate["training_plan"]["full_validation_epochs"], 1)
+            self.assertFalse((path / "trial/adapter_metadata.json").exists())
+            self.assertTrue((path / "trial/trial_metadata.json").exists())
+            self.assertAlmostEqual(trial_backend.ledger.snapshot()["estimated_cost_usd"],
+                                   trial_estimate["sft_train_and_validation_usd"])
 
 
 if __name__ == "__main__":

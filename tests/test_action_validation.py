@@ -155,9 +155,11 @@ class ActionValidationTests(unittest.TestCase):
 
     def test_real_datum_masks_include_complete_answer_and_preserve_canonical(self):
         class Tokenizer:
+            eos_token_id = ord(">")
+
             def apply_chat_template(self, messages, *, tokenize, add_generation_prompt, **kwargs):
                 result = "".join(f"<{message['role']}>{message['content']}" for message in messages)
-                return result + ("<assistant>" if add_generation_prompt else "<end>")
+                return result + ("<assistant>" if add_generation_prompt else "<end>\nAFTER_EOS")
 
             def encode(self, text, **kwargs):
                 return [ord(character) for character in text]

@@ -192,7 +192,13 @@ class TinkerBackend:
         if checkpoint is not None and (not checkpoint.startswith("tinker://") or "/sampler_weights/" not in checkpoint):
             raise ValueError("Inference requires a tinker://.../sampler_weights/... checkpoint.")
         if key not in self._sampling_clients:
+            from tinker.lib.retry_handler import RetryConfig
+
             kwargs = {"model_path": checkpoint} if checkpoint else {"base_model": self.base_model}
+            # The SDK's outer retry repeats a completed/failed sampling request
+            # with a new sequence ID. One budget reservation must cover only one
+            # such request; uncertain failures remain reserved for reconciliation.
+            kwargs["retry_config"] = RetryConfig(enable_retry_logic=False)
             self._sampling_clients[key] = resolve_future(self.service.create_sampling_client(**kwargs))
         return self._sampling_clients[key]
 

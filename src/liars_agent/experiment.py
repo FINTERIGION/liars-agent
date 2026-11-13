@@ -196,9 +196,41 @@ def make_backend(config: dict, output: Path):
                          budget_limit_usd=config["budget_limit_usd"])
 
 
-def estimate_cost(config: dict, output: Path) -> dict:
+def endgame_directory(config: dict, output: Path) -> Path:
+    path = Path(config["evaluation"].get("endgame_coverage_dir", "endgame_coverage"))
+    return path if path.is_absolute() else output / path
+
+
+def estimate_endgame_evaluation(config: dict, output: Path, backend) -> dict:
+    """Upper bound for one action + two label scores per applicable observation."""
+    directory = endgame_directory(config, output)
+    if not (directory / "observations.jsonl").exists():
+        return {"status": "not_available", "path": str(directory)}
+    action_prefill, belief_prefill, claim_count, count = 0, 0, 0, 0
+    for filename in ("observations.jsonl", "no_pending_claim.jsonl"):
+        for row in read_jsonl(directory / filename):
+            count += 1
+            action_prefill += len(backend.encode_messages([
+                {"role": "system", "content": row["action_system"]},
+                {"role": "user", "content": row["action_prompt"]}], generation=True))
+            if row["observation"]["last_claim"] is not None:
+                claim_count += 1
+                belief_prefill += 2 * (len(backend.encode_messages([
+                    {"role": "system", "content": row["belief_system"]},
+                    {"role": "user", "content": row["belief_prompt"]}], generation=True)) + 1)
+    generated = count * config["sampling"]["max_new_tokens"] + 2 * claim_count
+    cost = ((action_prefill + belief_prefill) * backend.rates["prefill"]
+            + generated * backend.rates["sample"]) / 1_000_000
+    return {"status": "estimated", "path": str(directory), "num_observations": count,
+        "num_claim_observations": claim_count, "prefill_tokens_per_llm": action_prefill + belief_prefill,
+        "generated_tokens_upper_bound_per_llm": generated, "usd_upper_bound_per_llm": cost,
+        "usd_upper_bound_three_llms": 3 * cost,
+        "basis": "one action sample and two single-label score requests per claim; no cache discount; local baselines cost zero"}
+
+
+def estimate_cost(config: dict, output: Path, *, max_train_steps: int | None = None) -> dict:
     """Count all accepted answers per state visit and every validation candidate."""
-    from liars_agent.training.tinker_train import build_sft_datum
+    from liars_agent.training.tinker_train import build_sft_datum, select_diagnostic_rows, training_diagnostic_plan
     from liars_agent.training.tinker_backend import PRICING_SOURCE, PRICING_DATE
     from liars_agent.training.action_supervision import normalize_action_policy, action_target_completions, mean_action_weight
     from liars_agent.agents.prompt_builder import BELIEF_SYSTEM_PROMPT, build_bluff_user_prompt
@@ -236,6 +268,10 @@ def estimate_cost(config: dict, output: Path) -> dict:
     if half < 1 or training["batch_size"] % 2:
         raise ValueError("Balanced training needs an even batch size.")
     steps = math.ceil(max(map(len, lengths["train"].values())) / half)
+    plan = training_diagnostic_plan(
+        {task: len(rows) for task, rows in grouped["train"].items()},
+        training["num_epochs"], training["batch_size"],
+        diagnostic_steps=training.get("diagnostic_steps", [50, 100]), max_train_steps=max_train_steps)
     training_tokens = 0
     state_tokens, answer_counts = {}, {}
     logical_visits = {task: 0 for task in ("action", "belief")}
@@ -247,11 +283,12 @@ def estimate_cost(config: dict, output: Path) -> dict:
             state_tokens[task].append(sum(token_length(row, answer) for answer in completions))
             answer_counts[task].append(len(completions))
     for epoch in range(training["num_epochs"]):
+        epoch_steps = min(steps, max(0, plan["planned_steps"] - epoch * steps))
         for index, task in enumerate(("action", "belief")):
             rows = grouped["train"][task]
             order = list(range(len(rows)))
             random.Random(training.get("seed", config["seed"]) + 2 * epoch + index).shuffle(order)
-            visits = [order[i % len(order)] for i in range(steps * half)]
+            visits = [order[i % len(order)] for i in range(epoch_steps * half)]
             training_tokens += sum(state_tokens[task][i] for i in visits)
             logical_visits[task] += len(visits)
             expanded_sequences[task] += sum(answer_counts[task][i] for i in visits)
@@ -259,21 +296,35 @@ def estimate_cost(config: dict, output: Path) -> dict:
     validation_action_tokens = sum(token_length(row, candidate_completion(row, action["action_id"]))
         for row in grouped["val"]["action"] for action in row["observation"]["legal_actions"])
     validation_candidates = sum(len(row["observation"]["legal_actions"]) for row in grouped["val"]["action"])
-    validation_tokens = (validation_action_tokens + counts["val"]["belief"]) * training["num_epochs"]
+    diagnostics = select_diagnostic_rows(
+        {split: [row for task in tasks.values() for row in task] for split, tasks in grouped.items()},
+        training.get("seed", config["seed"]), training.get("diagnostic_samples_per_task", 64))
+    diagnostic_action_tokens = sum(token_length(row, candidate_completion(row, action["action_id"]))
+        for row in diagnostics["action"] for action in row["observation"]["legal_actions"])
+    diagnostic_belief_tokens = sum(token_length(row) for row in diagnostics["belief"])
+    diagnostic_tokens = (diagnostic_action_tokens + diagnostic_belief_tokens) * len(plan["diagnostic_steps"])
+    full_validation_tokens = (validation_action_tokens + counts["val"]["belief"]) * plan["full_validation_epochs"]
+    validation_tokens = full_validation_tokens + diagnostic_tokens
     result = {"contract": current_contract(), "model": config["base_model"], "tokens_by_split_and_task": counts,
         "max_input_tokens": maximum, "balanced_training_tokens": training_tokens,
         "training_logical_state_visits": logical_visits,
         "training_expanded_sequences": expanded_sequences,
-        "training_optimizer_steps": steps * training["num_epochs"],
+        "training_optimizer_steps": plan["planned_steps"],
         "training_optimizer_steps_per_epoch": steps,
         "training_cost_basis": "state-based task-balanced batches; all accepted action answers at every state visit; one optimizer step per logical batch",
         "validation_tokens": validation_tokens,
+        "full_validation_tokens": full_validation_tokens,
+        "diagnostic_tokens": diagnostic_tokens,
+        "diagnostic_action_tokens_per_check": diagnostic_action_tokens,
+        "diagnostic_belief_tokens_per_check": diagnostic_belief_tokens,
+        "diagnostic_sample_ids": {task: [row["sample_id"] for row in rows] for task, rows in diagnostics.items()},
+        "training_plan": plan,
         "action_supervision_policy": policy,
         "training_action_raw_weight_mean": mean_action_weight(grouped["train"]["action"], policy),
         "validation_action_candidate_sequences_per_epoch": validation_candidates,
         "validation_action_tokens_per_epoch": validation_action_tokens,
         "validation_belief_tokens_per_epoch": counts["val"]["belief"],
-        "validation_cost_basis": "all legal action JSON sequences once per epoch; canonical NLL reuses that forward; no test model calls",
+        "validation_cost_basis": "all legal action JSON sequences at completed epochs plus a fixed validation subset at step 0 and configured early steps; no test model calls",
         "sft_train_and_validation_usd": backend.estimate_training_cost(training_tokens + validation_tokens),
         "belief_scoring_mean_usd_upper_bound_on_dataset": sum(score_costs) / len(score_costs),
         "belief_scoring_max_usd_upper_bound_on_dataset": max(score_costs),
@@ -281,19 +332,25 @@ def estimate_cost(config: dict, output: Path) -> dict:
         "rates_per_million_tokens": backend.rates, "budget": backend.ledger.snapshot(),
         "pricing_source": PRICING_SOURCE, "pricing_date": PRICING_DATE,
         "scope": "SFT exact dataset token estimate; inference/RS trajectory volume remains to be estimated before paid execution."}
-    write_json(output / "cost_estimate.json", result)
+    result["endgame_evaluation"] = estimate_endgame_evaluation(config, output, backend)
+    write_json(output / ("trial_cost_estimate.json" if max_train_steps is not None else "cost_estimate.json"), result)
     return result
 
 
-def train_model(config: dict, output: Path, backend, stage: str = "sft") -> dict:
+def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_train_steps: int | None = None) -> dict:
     from liars_agent.training.tinker_train import run_tinker_lora_sft
     from liars_agent.training.action_supervision import normalize_action_policy, require_training_objective
     policy = normalize_action_policy(config["training"].get("action_supervision"))
-    path = output / f"models/{stage}/adapter_metadata.json"
+    is_trial = stage == "sft_trial"
+    if not is_trial and max_train_steps is not None:
+        raise ValueError("A step limit belongs to the separate sft_trial stage.")
+    path = output / f"models/{stage}" / ("trial_metadata.json" if is_trial else "adapter_metadata.json")
     if path.exists():
         metadata = read_json(path)
         require_contract(metadata, "model metadata")
         require_training_objective(metadata, policy)
+        if is_trial and metadata.get("max_train_steps") != max_train_steps:
+            raise ValueError("This saved trial has a different step limit; use a new run directory.")
         return metadata
     ds_summary = read_json(output / "dataset/data_summary.json")
     require_contract(ds_summary, "dataset summary")
@@ -323,6 +380,9 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft") -> dict
         train_attn=config["lora"]["train_attn"], train_mlp=config["lora"]["train_mlp"],
         train_unembed=config["lora"]["train_unembed"],
         action_supervision_policy=policy,
+        diagnostic_steps=training.get("diagnostic_steps", [50, 100]),
+        diagnostic_samples_per_task=training.get("diagnostic_samples_per_task", 64),
+        max_train_steps=max_train_steps,
     )
 
 
@@ -509,6 +569,39 @@ def evaluate_frozen_beliefs(config, output, backend, model_keys):
     return results
 
 
+def evaluate_endgames(config: dict, output: Path, backend, model_keys: list[str], *, required=False) -> dict:
+    from liars_agent.evaluation.endgame_model import evaluate_endgame_models
+    from liars_agent.evaluation.endgame_coverage import validate_endgame_coverage
+    directory = endgame_directory(config, output)
+    if not (directory / "coverage_report.json").exists():
+        if required:
+            raise ValueError(f"Independent endgame check set is missing: {directory}")
+        return {"status": "not_available", "path": str(directory)}
+    source_run = read_json(directory / "private/generation_metadata.json")["source_run"]
+    coverage = validate_endgame_coverage(directory, source_run)
+    if coverage["status"] != "complete":
+        raise ValueError("Independent endgame coverage has unfilled reachable cells.")
+    results = {}
+    for key in model_keys:
+        target = output / f"evaluation/endgame_{key}.json"
+        # The evaluator validates frozen files and their fingerprint before model calls.
+        if key == "small_classifier":
+            agent = SmallClassifierBot.load_weights(output / "models/small_classifier_weights.json")
+        elif key == "rule_counter":
+            agent = CardCounterBot(name=key, seed=_derive_seed(config["seed"], "endgame_model"))
+        else:
+            agent = llm_factory(config, output, backend, key)(_derive_seed(config["seed"], "endgame_model"))
+        cached = {key: read_json(target)} if target.exists() else None
+        result = evaluate_endgame_models(directory, {key: agent}, cached_results=cached)
+        write_json(target, result["models"][key])
+        results[key] = result["models"][key]
+    summary = {"contract": current_contract(), "status": "complete", "dataset": result["dataset"],
+        "natural_distribution": False, "models": results,
+        "interpretation": "Independent diagnostic strata; free-action results are protocol checks, not optimal-action accuracy or win rate."}
+    write_json(output / "evaluation/endgame_summary.json", summary)
+    return summary
+
+
 def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict:
     from liars_agent.evaluation.duplicate_runner import run_duplicate_evaluation
     from liars_agent.evaluation.metrics import (compute_behavioral_profile, compute_belief_calibration,
@@ -583,7 +676,8 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
                 "denominators": {"win_rate": data["total_games"],
                     "challenge_hit_rate": data["profile"]["denominators"]["challenge_hit_rate"]}})
     frozen = evaluate_frozen_beliefs(config, output, backend, model_keys)
-    summary = {"contract": current_contract(), "frozen_belief": frozen, "status": "complete" if set(model_keys) == set(MODEL_LABELS) else "selected_models_only",
+    endgames = evaluate_endgames(config, output, backend, model_keys)
+    summary = {"contract": current_contract(), "frozen_belief": frozen, "endgame_diagnostics": endgames, "status": "complete" if set(model_keys) == set(MODEL_LABELS) else "selected_models_only",
                "models_evaluated": model_keys, "results": results, "paired_bootstrap_tests": paired,
                "history_ablation": ablations, "config": config,
                "dataset_and_training": read_json(output / "dataset/data_summary.json")}
@@ -624,13 +718,14 @@ def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | No
     paths = [output / "dataset/data_summary.json", output / "dataset/rs_summary.json", output / "experiment_summary.json"]
     paths.extend((output / "evaluation").glob("*.json"))
     paths.extend((output / "models").glob("*/adapter_metadata.json"))
+    paths.extend((output / "models").glob("*/trial_metadata.json"))
     paths.extend((output / "models").glob("*/training_progress.json"))
     paths.extend((output / "dataset/batches").glob("batch_*.json"))
     for path in paths:
         if path.exists():
             artifact = read_json(path)
             require_contract(artifact, str(path))
-            if action_supervision_policy is not None and path.name in ("adapter_metadata.json", "training_progress.json"):
+            if action_supervision_policy is not None and path.name in ("adapter_metadata.json", "trial_metadata.json", "training_progress.json"):
                 from liars_agent.training.action_supervision import require_training_objective
                 require_training_objective(artifact, action_supervision_policy)
     classifier = output / "models/small_classifier_weights.json"
@@ -659,17 +754,26 @@ def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | No
         if path.exists() and any(r["game_id"] in owner for r in read_jsonl(path)):
             raise ValueError("RS must use fresh training-side games.")
     snapshot = output / "config.json"
-    if snapshot.exists() and read_json(snapshot).get("dataset", {}).get("action_refinement"):
+    dataset_config = read_json(snapshot).get("dataset", {}) if snapshot.exists() else {}
+    if dataset_config.get("endgame_augmentation"):
+        from liars_agent.training.endgame_augmentation import validate_endgame_augmented_run
+        validate_endgame_augmented_run(output)
+    elif dataset_config.get("action_refinement"):
         from liars_agent.training.dataset_quality import validate_refined_dataset
         validate_refined_dataset(output)
-    if snapshot.exists() and read_json(snapshot).get("dataset", {}).get("supervision_preparation"):
+    if dataset_config.get("supervision_preparation"):
         from liars_agent.training.prepare_supervision import validate_prepared_supervision_run
         validate_prepared_supervision_run(output)
 
-def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: list[str] | None = None) -> dict:
+def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: list[str] | None = None,
+                 *, max_train_steps: int | None = None) -> dict:
     require_contract(config, "experiment configuration")
     from liars_agent.training.action_supervision import normalize_action_policy
     policy = normalize_action_policy(config["training"].get("action_supervision"))
+    if max_train_steps is not None and stage not in ("sft_trial", "estimate_trial"):
+        raise ValueError("--max-train-steps requires sft_trial or estimate_trial.")
+    if stage in ("sft_trial", "estimate_trial") and max_train_steps is None:
+        max_train_steps = 5
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     snapshot = output / "config.json"
@@ -690,7 +794,7 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
         status["stages"][current] = "running"
         write_json(status_path, status)
         try:
-            needs_api = current in ("sft", "rs", "preflight") or (current == "evaluate" and any(k.startswith("lora") or k == "zero_shot" for k in model_keys))
+            needs_api = current in ("sft", "sft_trial", "rs", "preflight") or (current in ("evaluate", "endgame_evaluate") and any(k.startswith("lora") or k == "zero_shot" for k in model_keys))
             validate_run_artifacts(output, action_supervision_policy=policy)
             if needs_api and backend is None:
                 backend = make_backend(config, output)
@@ -702,19 +806,23 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
                 summary = read_json(output / "dataset/data_summary.json")
                 if summary["shortfall"]:
                     raise ValueError(f"Data generation reached max_games with {summary['shortfall']} samples still missing; artifacts were saved.")
-            elif current == "estimate":
-                estimate_cost(config, output)
+            elif current in ("estimate", "estimate_trial"):
+                estimate_cost(config, output, max_train_steps=max_train_steps)
             elif current == "sft":
                 train_model(config, output, backend)
+            elif current == "sft_trial":
+                train_model(config, output, backend, "sft_trial", max_train_steps=max_train_steps)
             elif current == "rs":
                 if not (output / "dataset/rs_train.jsonl").exists():
                     generate_rs_data(config, output, backend)
                 train_model(config, output, backend, "rs")
             elif current == "evaluate":
                 evaluate(config, output, backend, model_keys)
+            elif current == "endgame_evaluate":
+                evaluate_endgames(config, output, backend, model_keys, required=True)
             elif current == "figures":
                 generate_figures(output)
-            status["stages"][current] = "complete"
+            status["stages"][current] = "trial_complete" if current == "sft_trial" else "complete"
         except Exception as exc:
             status["stages"][current] = "failed"
             status["error"] = {"stage": current, "type": type(exc).__name__, "message": str(exc)}
@@ -742,7 +850,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output-dir", type=Path, default=None)
-    parser.add_argument("--stage", choices=("all", "local", "data", "estimate", "sft", "rs", "evaluate", "figures", "preflight"), default="all")
+    parser.add_argument("--stage", choices=("all", "local", "data", "estimate", "estimate_trial", "sft", "sft_trial", "rs", "evaluate", "endgame_evaluate", "figures", "preflight"), default="all")
+    parser.add_argument("--max-train-steps", type=int, help="Bounded trial only; default 5 steps for sft_trial/estimate_trial")
     parser.add_argument("--models", help="Comma-separated model keys for evaluation")
     parser.add_argument("--smoke", action="store_true", help="Small local data/check sizes; never changes model identities")
     parser.add_argument("--eval-blocks", type=int)
@@ -767,7 +876,8 @@ def main() -> None:
     if args.seed is not None:
         config["seed"] = args.seed
     output = args.output_dir or ROOT / "outputs/runs" / datetime.now().strftime("%Y%m%d_%H%M%S")
-    result = run_pipeline(config, output, args.stage, args.models.split(",") if args.models else None)
+    result = run_pipeline(config, output, args.stage, args.models.split(",") if args.models else None,
+                          max_train_steps=args.max_train_steps)
     print(json.dumps({"output_dir": str(output.resolve()), **result}, ensure_ascii=False, indent=2))
 
 

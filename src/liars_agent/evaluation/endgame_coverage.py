@@ -114,6 +114,19 @@ def _coverage_action(obs: PlayerObservation, seed: int):
     return rng.choice([action for action in candidates if preference(action) == best])
 
 
+def generate_coverage_replay(game_id: str, game_seed: int, policy_seed: int) -> dict:
+    """Play a complete legal coverage trajectory with explicit independent seeds."""
+    engine = LiarsBarEngine(game_id=game_id, game_seed=game_seed)
+    while not engine.is_game_over():
+        obs = engine.get_observation()
+        action = _coverage_action(obs, policy_seed)
+        engine.step(action, AgentDecisionRecord(
+            rationale=describe_action(obs, action), rationale_source="action_description",
+            belief_source="not_requested",
+        ))
+    return GameReplayBundle.from_engine(engine, ["endgame_coverage_policy"] * 4).to_dict()
+
+
 def _public_sample(sample_id: str, observation: dict, tags: list[str]) -> dict:
     obs = PlayerObservation.from_dict(observation)
     return {"sample_id": sample_id, "observation": observation,
@@ -157,15 +170,8 @@ def build_endgame_coverage(
         if game_seed in source_seeds or game_seed in used_seeds or game_id in source_ids:
             raise ValueError("Generated environment identity overlaps another source game.")
         used_seeds.add(game_seed)
-        engine = LiarsBarEngine(game_id=game_id, game_seed=game_seed)
-        while not engine.is_game_over():
-            obs = engine.get_observation()
-            action = _coverage_action(obs, _derive_seed(seed, "independent_endgame_policy_v1", game_index))
-            engine.step(action, AgentDecisionRecord(
-                rationale=describe_action(obs, action), rationale_source="action_description",
-                belief_source="not_requested",
-            ))
-        replay = GameReplayBundle.from_engine(engine, ["endgame_coverage_policy"] * 4).to_dict()
+        replay = generate_coverage_replay(game_id, game_seed,
+            _derive_seed(seed, "independent_endgame_policy_v1", game_index))
         games_attempted += 1
         per_game_counts, no_claim_seen = Counter(), set()
         selected = 0

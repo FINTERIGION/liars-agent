@@ -2,7 +2,7 @@
 
 The checkpoint metric is -log(sum P(answer)) over the teacher's acceptable
 action set. Each P(answer) uses the sum of its answer-token log probabilities,
-including the assistant ending supplied by the training chat template. The
+    through the first assistant EOS, excluding later template separators. The
 softmax over legal candidates is reported separately as a diagnostic.
 """
 from __future__ import annotations
@@ -158,7 +158,7 @@ def evaluate_action_validation(
     return {**_aggregate(states), "policy": normalized_policy,
             "weighting": "equal_per_state_without_ambiguity_weights",
             "checkpoint_metric": "action_set_nll",
-            "sequence_probability": "exp(sum of complete answer token logprobs, including chat-template assistant ending)",
+            "sequence_probability": "exp(sum of answer token logprobs through first assistant EOS, excluding later template separators)",
             "candidate_probability": "renormalized over the enumerated legal JSON answers only",
             "action_set_accuracy_prediction": "legal_candidate_argmax; not unconstrained generated actions",
             "regret_definition": "max stored teacher candidate value minus chosen candidate value; undefined if unavailable",

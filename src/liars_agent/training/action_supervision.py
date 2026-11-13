@@ -6,7 +6,7 @@ import math
 
 from liars_agent.agents.prompt_builder import validate_action_decision
 from liars_agent.engine.observation import PlayerObservation
-ACTION_SUPERVISION_VERSION = "empirical_all_answers_weighted_actions_v2"
+ACTION_SUPERVISION_VERSION = "empirical_all_answers_weighted_actions_v3"
 DEFAULT_ACTION_SUPERVISION_POLICY = {
     "version": ACTION_SUPERVISION_VERSION,
     "positive_gap_weight": .5,
@@ -14,6 +14,7 @@ DEFAULT_ACTION_SUPERVISION_POLICY = {
     "gap_threshold": .05,
     "target_selection": "all_acceptable_answers_per_state",
     "answer_weighting": "equal_share_of_state_weight",
+    "action_ending": "first_assistant_eos_inclusive",
     "action_weight_normalization": "train_mean",
     "checkpoint_selection": "val_action_set_nll",
 }

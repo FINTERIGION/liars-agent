@@ -126,17 +126,27 @@ python scripts/audit_refined_labels.py \
 ```bash
 python scripts/prepare_action_supervision.py \
   --source-run outputs/runs/selfplay_v2_20261113_01_quality \
-  --output-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v2
+  --output-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3
+python scripts/augment_endgame_training.py \
+  --source-run outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3 \
+  --output-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3_endgame \
+  --seed 2026111407 --samples-per-cell 20 --min-games-per-cell 10 --num-rollouts 64 --workers 8
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/run_full_pipeline.py \
-  --config outputs/runs/selfplay_v2_20261113_01_quality_supervision_v2/config.json \
-  --output-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v2 --stage estimate
+  --config outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3_endgame/config.json \
+  --output-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3_endgame --stage estimate
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/check_action_supervision.py \
-  --run-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v2
+  --run-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3_endgame
 ```
 
-新目录保留全部样本、原始单答案、信念标签和按局划分，另外保存 `action_supervision` 描述及源文件哈希。其 `config.json` 和目录配套用于后续阶段。复评中间产物缺少新监督描述时，训练会要求先准备新目录；新监督目标版本为 `empirical_all_answers_weighted_actions_v2`；训练或恢复训练时，旧版轮换目标的数据、checkpoint/恢复进度在收费会话前拒绝，原 v1 目录保留为历史记录。上述命令不创建 Tinker 服务会话，tokenizer 核验只使用本地缓存；不会运行训练。
+监督准备目录保留原样本并写入答案集合与源文件哈希；残局补充目录从新种子完整对局提取训练侧动作，替换等量普通训练样本，保留原有残局样本。训练动作仍为 8,000 条，三轮仍为 1,500 步；验证、测试、全部信念样本、独立检查集和分类器权重保持不变。补充对局只归入 train，且与原数据及检查集的游戏 ID、环境种子和所选动作输入隔离。16 个可达格各至少 20 条、至少来自 10 局；自由动作每候选至少 64 次共享随机条件续玩，沿用全并列答案与小分差权重，不再以优势门槛筛空稀有格；强制单动作直接按合法表监督，不捏造收益分差。
 
-本次 20,000 条样本的处理数量、检查结果和 token 计数见[本地验收记录](docs/all_answer_supervision_validation.md)。
+当前监督版本为 `empirical_all_answers_weighted_actions_v3`，动作回答截止首个 assistant EOS（含 EOS），排除其后模板换行；训练和验证共享这一边界。v1/v2 数据、checkpoint 和恢复进度不能直接进入新训练，旧目录保留为历史记录。其 `config.json` 和目录配套用于后续阶段。上述命令不创建 Tinker 服务会话，tokenizer 核验只使用本地缓存；不会运行训练。
+
+`evaluate` 会评估运行目录中的独立残局检查集；也可用 `--stage endgame_evaluate --models small_classifier,rule_counter` 单独执行本地基线检查。LLM 使用相同冻结观测，报告原生输出合法率、强制质疑遵从率、回退率和信念校准，按场景／存活人数显示分母。自由动作没有最优标签，因此不报告最优动作准确率；这组人为覆盖分布也不代表自然对局胜率。已有预测绑定检查集哈希和模型参数，恢复时复用，错配拒绝。
+
+早期验证固定抽取每任务最多 64 条验证样本，在第 0、50、100 步计算诊断，不参与 checkpoint 选择。以后获准真实调用时，可先用 `--stage estimate_trial --max-train-steps 5` 离线估算，再用 `--stage sft_trial --max-train-steps 5` 运行有限步数小试；两者使用同一数据目录和配置。小试在末步额外诊断，结果写入 `models/sft_trial/trial_metadata.json`，不产生正式 adapter，不标为 SFT 完成，也不被 RS 或模型评测自动使用。正式训练仍通过 `--stage sft` 启动，学习率计划仍按完整三轮计算。
+
+此前全答案监督的检查结果见 [v2 历史记录](docs/all_answer_supervision_validation.md)；当前训练准备结果见[训练前修正验收](docs/training_readiness_validation.md)。
 
 ## 方法与默认参数
 
@@ -149,7 +159,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/check_action_supervision.
 - **动作任务：** 模型每次仍输出严格 JSON `{"chosen_action_id":"A0"}`。保存教师实测均值最高的全部动作（浮点容差 `1e-12`），不把分差在 0.05 内的所有动作都当成正确答案。每次访问一个动作状态时，全部可接受答案都参与监督。若该状态有 k 个答案、有效权重为 w，每个答案分配 w/k，再平分到其回答 token；状态总权重保持 w。答案顺序固定，恢复后目标和权重不变，覆盖不再依赖 epoch 数。样本生成、收费训练前检查与推理复用同一校验器；Markdown 外壳和额外字段也属于非法协议。
 - **信念任务：** 事件为“上一手是否至少含一张假牌”。真实引擎标签监督单 token `0/1`，不只抽被质疑的牌，也不按动作收益筛选。推理从同一 checkpoint 的两个标签 log probability 归一化得到概率；无待回应声称时为 null，无信念调用。
 - **SFT：** 一个 LoRA 同时训练上述两任务。rank 16、attention/MLP 开启、unembedding 关闭；学习率 `2e-4`，batch 32 每任务 16 条，3 epochs。只有唯一最高分且正分差不超过 0.05 的动作样本取原始权重 0.5；其他样本取 1。动作状态权重仅按训练动作集合的原始均值归一，再均分到全部可接受答案；信念标签权重始终为 1。batch 32 指 16 个动作状态和 16 条信念样本，按状态采样后才展开答案。每个逻辑 batch 只做一次优化器更新，步数及学习率计划不随答案数增加。0.5 是可配置的训练启发式，不代表置信概率。较短任务按固定种子循环，双任务期望总权重保持平衡。
-- **训练验证：** 每个验证状态枚举所有合法 JSON 答案，用完整回答 token（含聊天模板结束符）的 log probability 之和计算序列概率。checkpoint 按未降权、每状态等权的 `val_action_set_nll = -log(sum P(可接受答案))` 选择；单答案退化为完整序列 NLL。另报告合法候选归一化后的集合概率、候选 argmax 集合命中率、教师估计后悔值、原单答案平均 token NLL，以及`clear`／`tied`／`small_gap` 分组的指标和样本数，空组为 null。候选命中率不是自由生成动作的合法率或对局胜率；教师未评分所选动作时后悔值不可估计。信念标签 CE 单独记录；归一化二分类 log loss、Brier、ECE 另行评测。
+- **训练验证：** 每个验证状态枚举所有合法 JSON 答案，用截至首个 assistant EOS（含 EOS、排除其后模板分隔符）的回答 token log probability 之和计算序列概率。checkpoint 按未降权、每状态等权的 `val_action_set_nll = -log(sum P(可接受答案))` 选择；单答案退化为完整序列 NLL。另报告合法候选归一化后的集合概率、候选 argmax 集合命中率、教师估计后悔值、原单答案平均 token NLL，以及`clear`／`tied`／`small_gap` 分组的指标和样本数，空组为 null。候选命中率不是自由生成动作的合法率或对局胜率；教师未评分所选动作时后悔值不可估计。信念标签 CE 单独记录；归一化二分类 log loss、Brier、ECE 另行评测。
 - **RS：** 一轮，从 SFT 在训练侧新对局中的每状态 4 个候选筛选 2,000 条动作样本，排除回退候选，使用相同规则教师评分；另独立提取 2,000 条真实信念样本，不复制模型概率或理由为标签。从最佳 SFT 状态继续训练 1 epoch，学习率 `5e-5`；验证与测试保持隔离。
 - **画像与说明：** 记录公开主动质疑频率、平均出牌张数、被揭示诈唬比例及分母；这些统计不等于真实策略身份，身份字段为 unknown。容量先验和人工启发式仅供规则基线使用，不充当概率真值。“动作说明”来自可核对的事实模板，不冒充模型的内部推理。
 - **推理：** 零样本使用基础模型，SFT/RS 必须提供带当前方法合同的 checkpoint 元数据。非法动作 JSON 回退到记牌策略，独立模型信念保留，回退记录另存；认证、模型、checkpoint 或服务错误明确报告。全历史超出配置长度明确报错，不静默截断。
@@ -175,9 +185,9 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/check_action_supervision.
 | `experiment_summary.json` / `figures/` | 统一汇总及对应 SVG 图表 |
 | `ui_models.yaml` | 此次运行可用于界面的模型和分类器配置 |
 
-所有运行和其界面共用 `outputs/budget_usage.jsonl`，上限为本项目授权的 **5000 美元**。每次收费请求前按输入 token 和输出上限预留额度，收到响应后按 token 数结算估算；跨进程锁防止多个界面/任务重复占用额度。结果未知的失败请求保留预留，不自动重复计作免费调用。信念打分的 SDK 内部每次至多额外生成 1 token，两个打分请求按完整前缀加最多 2 个生成 token 保守记账，不假定缓存折扣；`completion_tokens` 仅计实际返回的动作输出，隐藏生成另记 `belief_completion_tokens_upper_bound`，账本标注上界。估算包含全部可接受答案展开、按状态的双任务循环补齐所需的训练 token，以及每 epoch 全部合法验证候选和信念标签的 forward token；原单答案诊断复用候选结果，不重复调用。账本属于 token 费用估算，不是服务商账单；checkpoint 存储费用不包含在其中，正式运行时还需核对账号账单。费率快照来源为 [Tinker 官方价格](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)。
+所有运行和其界面共用 `outputs/budget_usage.jsonl`，上限为本项目授权的 **5000 美元**。每次收费请求前按输入 token 和输出上限预留额度，收到响应后按 token 数结算估算；跨进程锁防止多个界面/任务重复占用额度。结果未知的失败请求保留预留。采样客户端显式关闭 SDK 外层自动重提交（`RetryConfig(enable_retry_logic=False)`），避免一次预算预留对应多个新请求；同请求的底层传输重试机制保留。信念打分的 SDK 内部每次至多额外生成 1 token，两个打分请求按完整前缀加最多 2 个生成 token 保守记账，不假定缓存折扣；`completion_tokens` 仅计实际返回的动作输出，隐藏生成另记 `belief_completion_tokens_upper_bound`，账本标注上界。估算包含全部可接受答案展开、按状态的双任务循环补齐所需的训练 token，以及每 epoch 全部合法验证候选、信念标签和第 0／50／100 步固定验证子集的 forward token；原单答案诊断复用候选结果，不重复调用。`cost_estimate.json` 另列独立残局集每个 LLM 的动作生成与信念打分费用上界，`trial_cost_estimate.json` 只计有限步数小试及其实际验证计划。账本属于 token 费用估算，不是服务商账单；checkpoint 存储费用不包含在其中，正式运行时还需核对账号账单。费率快照来源为 [Tinker 官方价格](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)。
 
-LoRA 参数使用 [Tinker SDK 实际支持的接口](https://tinker-docs.thinkingmachines.ai/tinker/api-reference/serviceclient/)，checkpoint 默认持久保存。回放校验会逐步重建公开观测、隐藏手牌、真假标签、结算与终局；模型输出和时延只作为记录保存，不声称能由引擎重新生成。
+LoRA 参数使用 [Tinker SDK 实际支持的接口](https://tinker-docs.thinkingmachines.ai/tinker/api-reference/serviceclient/)，checkpoint 默认持久保存。从 checkpoint 初始化训练时，在创建服务会话前核对来源 rank 和 attention／MLP／unembedding 开关；配置缺失或不一致会拒绝，不能以新配置覆盖实际继承的 LoRA 元数据。回放校验会逐步重建公开观测、隐藏手牌、真假标签、结算与终局；模型输出和时延只作为记录保存，不声称能由引擎重新生成。
 
 没有凭证或真实 checkpoint 时，不会生成“训练完成”或虚构 Qwen 胜率。
 

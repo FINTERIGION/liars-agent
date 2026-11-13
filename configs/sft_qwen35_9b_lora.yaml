@@ -31,8 +31,10 @@ training:
   num_epochs: 3
   max_seq_length: 16384
   seed: 42
+  diagnostic_steps: [50, 100]
+  diagnostic_samples_per_task: 64
   action_supervision:
-    version: empirical_all_answers_weighted_actions_v2
+    version: empirical_all_answers_weighted_actions_v3
     positive_gap_weight: 0.5  # configured heuristic, not a probability/confidence
     tie_tolerance: 1.0e-12
     gap_threshold: 0.05
@@ -40,6 +42,7 @@ training:
     answer_weighting: equal_share_of_state_weight
     action_weight_normalization: train_mean
     checkpoint_selection: val_action_set_nll
+    action_ending: first_assistant_eos_inclusive
 
 sampling:
   temperature: 0.2
@@ -63,3 +66,4 @@ evaluation:
   bootstrap_samples: 10000
   unseen_belief_samples: 1000
   unseen_belief_max_games: 1000
+  endgame_coverage_dir: endgame_coverage

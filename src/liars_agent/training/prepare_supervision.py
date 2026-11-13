@@ -44,6 +44,9 @@ def prepare_supervision_run(source_run: Path, output: Path, policy: dict | None 
                    "source_files_sha256": binding, "candidate_reports_sha256": report_hash}
     config = copy.deepcopy(source_config)
     config["training"]["action_supervision"] = policy
+    config["training"].setdefault("diagnostic_steps", [50, 100])
+    config["training"].setdefault("diagnostic_samples_per_task", 64)
+    config["evaluation"].setdefault("endgame_coverage_dir", "endgame_coverage")
     config["dataset"]["supervision_preparation"] = preparation
     output.mkdir(parents=True, exist_ok=True)
     if (output / "config.json").exists() and read_json(output / "config.json") != config:
