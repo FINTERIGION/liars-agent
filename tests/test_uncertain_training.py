@@ -183,14 +183,19 @@ class TestUncertainTraining(unittest.TestCase):
         self.assertEqual(self.service.training.saved_samplers, ["sft-best-epoch-1", "sft-best-epoch-2"])
 
     def test_step_limited_trial_preserves_schedule_and_never_writes_formal_adapter(self):
+        from trial_fakes import make_trial_backend
+        self.backend, self.service = make_trial_backend(self.path / "trial_budget.jsonl")
         splits = self.splits()
         splits["train"] += [self.belief("train", str(i)) for i in range(2)]
         out = self.path / "trial"
         result = run_tinker_lora_sft([], out, backend=self.backend, splits=splits,
-            num_epochs=3, batch_size=2, learning_rate=2e-4, warmup_ratio=.5,
+            num_epochs=3, batch_size=2, learning_rate=.1, warmup_ratio=.5,
             diagnostic_steps=[1, 50], max_train_steps=2, stage="sft_trial")
-        self.assertEqual(self.service.training.optim_calls, 2)
-        self.assertEqual(self.service.training.learning_rates, [2e-4 / 5, 2e-4 * 2 / 5])
+        self.assertEqual(self.service.training.optim_calls, 3)  # Plus one live-branch verification update.
+        for actual, expected in zip(self.service.training.learning_rates[:2], [.1 / 5, .1 * 2 / 5]):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(result["trial_verification"]["status"], "passed")
+        self.assertEqual(result["trial_verification_optimizer_steps"], 3)
         self.assertEqual([row["step"] for row in result["early_diagnostics"]["records"]], [0, 1, 2])
         self.assertEqual(result["training_metrics"]["training_expanded_sequences"], {"action": 4, "belief": 2})
         self.assertEqual(result["training_metrics"]["training_logical_state_visits"], {"action": 2, "belief": 2})
@@ -219,8 +224,11 @@ class TestUncertainTraining(unittest.TestCase):
                 constructor.assert_not_called()
 
     def test_trial_reaching_full_epoch_retains_validation_but_stays_a_trial(self):
+        from trial_fakes import make_trial_backend
+        self.backend, self.service = make_trial_backend(self.path / "whole_epoch_budget.jsonl")
         result = run_tinker_lora_sft([], self.path / "whole_epoch_trial", backend=self.backend,
-            splits=self.splits(), num_epochs=1, batch_size=2, max_train_steps=5, diagnostic_steps=[])
+            splits=self.splits(), num_epochs=1, batch_size=2, learning_rate=.1,
+            max_train_steps=5, diagnostic_steps=[])
         self.assertEqual(result["training_metrics"]["completed_steps"], 1)
         self.assertEqual(result["training_metrics"]["full_validation_epochs"], 1)
         self.assertEqual([row["step"] for row in result["early_diagnostics"]["records"]], [0, 1])

@@ -6,6 +6,8 @@ import json
 import math
 import random
 import time
+import uuid
+from functools import wraps
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -26,6 +28,30 @@ def _write_json(path: Path, value: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
     temporary.replace(path)
+
+
+def _record_trial_failure(function):
+    """Keep persisted trial evidence accurate for train, save and verification errors."""
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        output = kwargs.get("output_dir", args[1] if len(args) > 1 else None)
+        path = Path(output) / "trial_verification.json" if output is not None else None
+        prior_attempt = (json.loads(path.read_text(encoding="utf-8")).get("attempt_id")
+                         if kwargs.get("max_train_steps") is not None and path is not None and path.exists() else None)
+        try:
+            return function(*args, **kwargs)
+        except Exception as exc:
+            if kwargs.get("max_train_steps") is not None and output is not None:
+                if path.exists():
+                    report = json.loads(path.read_text(encoding="utf-8"))
+                    if report.get("attempt_id") == prior_attempt:
+                        raise  # Input rejection must preserve any previous attempt's evidence.
+                    report.update(status="failed", error={"type": type(exc).__name__, "message": str(exc)})
+                    if hasattr(exc, "partial_report"):
+                        report["failed_check"] = exc.partial_report
+                    _write_json(path, report)
+            raise
+    return wrapped
 
 
 def validate_training_sample(sample: dict[str, Any], *,
@@ -175,6 +201,21 @@ def training_diagnostic_plan(train_counts: dict[str, int], num_epochs: int, batc
             "diagnostic_steps": sorted(steps), "is_trial": max_train_steps is not None}
 
 
+def next_logical_batch_indices(train_counts: dict[str, int], batch_size: int,
+                                seed: int, absolute_step: int) -> dict[str, list[int]]:
+    """Zero-based batch position in the existing epoch/shuffle/cycling schedule."""
+    half = batch_size // 2
+    per_epoch = math.ceil(max(train_counts.values()) / half)
+    epoch, local_step = divmod(absolute_step, per_epoch)
+    selected = {}
+    for task_index, task in enumerate(("action", "belief")):
+        order = list(range(train_counts[task]))
+        random.Random(seed + 2 * epoch + task_index).shuffle(order)
+        selected[task] = [order[(local_step * half + offset) % len(order)] for offset in range(half)]
+    return selected
+
+
+@_record_trial_failure
 def run_tinker_lora_sft(
     samples: list[dict[str, Any]], output_dir: str | Path,
     base_model: str = "Qwen/Qwen3.5-9B", lora_rank: int = 16,
@@ -188,6 +229,7 @@ def run_tinker_lora_sft(
     action_supervision_policy: dict | None = None,
     diagnostic_steps: list[int] | tuple[int, ...] = (50, 100),
     diagnostic_samples_per_task: int = 64, max_train_steps: int | None = None,
+    trial_verification_config: dict | None = None, trial_sampling_config: dict | None = None,
 ) -> dict[str, Any]:
     """Use equal state counts per batch; cycle the shorter task within each epoch.
 
@@ -230,6 +272,10 @@ def run_tinker_lora_sft(
     action_weight_mean = mean_action_weight(grouped["train"]["action"], policy)
     plan = training_diagnostic_plan({task: len(rows) for task, rows in grouped["train"].items()},
                                    num_epochs, batch_size, diagnostic_steps, max_train_steps)
+    from liars_agent.training.trial_verification import normalize_trial_verification_config
+    verification_config = normalize_trial_verification_config(trial_verification_config)
+    sampling_config = {"temperature": .2, "top_p": .9, "max_new_tokens": 256,
+                       **(trial_sampling_config or {})}
     diagnostic_rows = select_diagnostic_rows(splits, seed, diagnostic_samples_per_task)
     fingerprint = hashlib.sha256(json.dumps(splits, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     out = Path(output_dir)
@@ -245,6 +291,8 @@ def run_tinker_lora_sft(
         "checkpoint_ttl_seconds": checkpoint_ttl_seconds,
         "diagnostic_steps": list(diagnostic_steps), "diagnostic_samples_per_task": diagnostic_samples_per_task,
         "max_train_steps": max_train_steps, "diagnostic_plan": plan,
+        "trial_verification_config": verification_config if plan["is_trial"] else None,
+        "trial_sampling_config": sampling_config if plan["is_trial"] else None,
         "task_balance": "equal_states_per_batch_cycle_shorter",
         "logical_batch_task_counts": {"action": batch_size // 2, "belief": batch_size // 2},
         "action_supervision_policy": policy,
@@ -296,6 +344,15 @@ def run_tinker_lora_sft(
             build_sft_datum(row, backend, max_seq_length,
                             completion_override=candidate_completion(row, action.action_id),
                             action_supervision_policy=policy)
+    trial_probes = probe_data = None
+    if plan["is_trial"]:
+        from liars_agent.training.trial_verification import select_trial_probe_rows, build_trial_probe_data
+        from liars_agent.training.trial_sampling import estimate_saved_sampler_verification
+        trial_probes = select_trial_probe_rows(splits, seed, verification_config["probe_per_task"])
+        probe_data = build_trial_probe_data(trial_probes, backend, max_seq_length, policy)
+        # Validate both label templates and output limits before creating a paid session.
+        estimate_saved_sampler_verification(backend, trial_probes, max_seq_length=max_seq_length,
+                                            max_new_tokens=sampling_config["max_new_tokens"])
     backend.preflight()
     if resume:
         client = resolve_future(backend.service.create_training_client_from_state_with_optimizer(progress["resume_state_path"]))
@@ -324,6 +381,24 @@ def run_tinker_lora_sft(
     expanded_sequences = {task: sum(entry["training_expanded_sequences"][task] for entry in loss_curve)
                           for task in ("action", "belief")}
     start_time = time.perf_counter()
+    closure = {"contract": current_contract(), "version": verification_config["version"],
+        "attempt_id": uuid.uuid4().hex,
+        "status": "running", "config": verification_config, "sampling_config": sampling_config,
+        "dataset_sha256": fingerprint, "base_model": base_model, "lora_config": lora_config,
+        "source_split": "val", "model_api_calls_are_real_when_executed": True}
+    closure_path = out / "trial_verification.json"
+    if plan["is_trial"]:
+        from liars_agent.training.trial_verification import score_trial_probe
+        closure["probe_ids"] = {task: [row["sample_id"] for row in rows] for task, rows in trial_probes.items()}
+        _write_json(closure_path, closure)
+        try:
+            closure["before_update"] = score_trial_probe(client, backend, probe_data)
+            closure["baseline_control"] = score_trial_probe(client, backend, probe_data)
+            _write_json(closure_path, closure)
+        except Exception as exc:
+            closure.update(status="failed", error={"type": type(exc).__name__, "message": str(exc)})
+            _write_json(closure_path, closure)
+            raise
 
     def belief_validation(data: list[Any]) -> float:
         nll_total = weight_total = 0.0
@@ -347,6 +422,9 @@ def run_tinker_lora_sft(
 
     if start_epoch == 0:
         diagnose(0)
+    if plan["is_trial"]:
+        closure["phase"] = "training_and_diagnostics"
+        _write_json(closure_path, closure)
     partial_epoch = None
     for epoch in range(start_epoch, num_epochs):
         orders = {}
@@ -399,9 +477,21 @@ def run_tinker_lora_sft(
         entry["train_loss"] = (entry["train_action_loss"] + entry["train_belief_loss"]) / 2
         entry["val_loss"] = entry["val_action_set_nll"]
         loss_curve.append(entry)
+        if plan["is_trial"]:
+            closure["phase"] = "save_epoch_state"
+            _write_json(closure_path, closure)
         state = resolve_future(client.save_state(name=f"{stage}-epoch-{epoch + 1}", ttl_seconds=checkpoint_ttl_seconds))
+        if plan["is_trial"]:
+            closure.setdefault("epoch_checkpoints", []).append({"epoch": epoch + 1, "state_path": state.path})
+            _write_json(closure_path, closure)
         if not best or entry["val_action_set_nll"] < best["val_loss"]:
+            if plan["is_trial"]:
+                closure["phase"] = "save_epoch_sampler"
+                _write_json(closure_path, closure)
             sampler = resolve_future(client.save_weights_for_sampler(name=f"{stage}-best-epoch-{epoch + 1}", ttl_seconds=checkpoint_ttl_seconds))
+            if plan["is_trial"]:
+                closure["epoch_checkpoints"][-1]["sampler_path"] = sampler.path
+                _write_json(closure_path, closure)
             best = {"epoch": epoch + 1, "val_loss": entry["val_action_set_nll"],
                     "metric": "val_action_set_nll",
                     "sampler_path": sampler.path, "state_path": state.path}
@@ -415,9 +505,52 @@ def run_tinker_lora_sft(
             break
     trial_paths = None
     if plan["is_trial"]:
+        closure.update(phase="save_state", completed_training_steps=completed_steps, checkpoints={})
+        _write_json(closure_path, closure)
         state = resolve_future(client.save_state(name=f"{stage}-trial-step-{completed_steps}", ttl_seconds=checkpoint_ttl_seconds))
+        closure["checkpoints"]["state_path"] = state.path
+        closure["phase"] = "save_sampler"
+        _write_json(closure_path, closure)
         sampler = resolve_future(client.save_weights_for_sampler(name=f"{stage}-trial-step-{completed_steps}", ttl_seconds=checkpoint_ttl_seconds))
         trial_paths = {"state_path": state.path, "sampler_path": sampler.path}
+        closure.update(checkpoints=trial_paths, phase="verify_saved_sampler")
+        _write_json(closure_path, closure)
+        try:
+            from liars_agent.training.trial_verification import verify_trial_reload_and_optimizer
+            from liars_agent.training.trial_sampling import verify_saved_sampler
+            closure["saved_snapshot"] = score_trial_probe(client, backend, probe_data)
+            # Sampling must be compared with the saved state before the three
+            # diagnostic continuation branches mutate their in-memory clients.
+            closure["sampling"] = verify_saved_sampler(backend, client, sampler.path, trial_probes,
+                max_seq_length=max_seq_length, seed=seed,
+                temperature=sampling_config["temperature"], top_p=sampling_config["top_p"],
+                max_new_tokens=sampling_config["max_new_tokens"],
+                logprob_atol=verification_config["logprob_atol"], logprob_rtol=verification_config["logprob_rtol"])
+            _write_json(closure_path, closure)
+            if closure["sampling"]["status"] != "passed":
+                raise RuntimeError("Saved sampler action/belief verification did not pass; see trial_verification.json.")
+            indices = next_logical_batch_indices({task: len(rows) for task, rows in train_data.items()},
+                                                  batch_size, seed, completed_steps)
+            verification_batch = [datum for index in indices["action"] for datum in train_data["action"][index]]
+            verification_batch += [train_data["belief"][index] for index in indices["belief"]]
+            next_learning_rate = learning_rate * min(1, (completed_steps + 1) / max(1, warmup_steps))
+            closure["phase"] = "verify_state_and_optimizer"
+            _write_json(closure_path, closure)
+            closure["training"] = verify_trial_reload_and_optimizer(
+                backend, client, state.path, probe_data, closure["before_update"],
+                closure["baseline_control"], closure["saved_snapshot"], verification_batch,
+                next_learning_rate, config=verification_config)
+            closure["status"] = "passed" if closure["training"]["status"] == "passed" else "not_passed"
+            closure["phase"] = "complete"
+            _write_json(closure_path, closure)
+            if closure["status"] != "passed":
+                raise RuntimeError("Trial update/state/optimizer verification did not pass; see trial_verification.json.")
+        except Exception as exc:
+            closure.update(status="failed", error={"type": type(exc).__name__, "message": str(exc)})
+            if hasattr(exc, "partial_report"):
+                closure["failed_check"] = exc.partial_report
+            _write_json(closure_path, closure)
+            raise
     metadata = {"contract": current_contract(), "adapter_name": f"qwen35_9b_liars_lora_{stage}",
         "base_model": base_model, "platform": "tinker", "backend": "tinker", "stage": stage,
         "action_supervision_policy": policy,
@@ -431,6 +564,9 @@ def run_tinker_lora_sft(
         "full_validation_best": best or None,
         "checkpoint_role": "trial_final_step" if plan["is_trial"] else "full_validation_best",
         "early_diagnostics": {"subset": subset, "records": diagnostics},
+        "trial_verification": closure if plan["is_trial"] else None,
+        "trial_verification_optimizer_steps": (closure["training"]["plan"]["diagnostic_optimizer_steps"]
+                                              if plan["is_trial"] else 0),
         "dataset_sha256": fingerprint, "source_state_path": resume_from,
         "lora_config": lora_config,
         "dataset_summary": {name: {task: len(rows) for task, rows in tasks.items()} for name, tasks in grouped.items()},

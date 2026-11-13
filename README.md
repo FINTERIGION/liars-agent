@@ -88,14 +88,16 @@ python -m liars_agent.ui.app --port 7860 \
 
    也可通过环境变量 `TINKER_API_KEY` 配置凭证。密钥不写入代码、配置快照或实验产物。
 
-4. 执行正式训练和评测：
+4. 先完成真实小试闭环，再执行正式训练和评测（以下命令会调用付费服务）：
 
    ```bash
+   python scripts/run_full_pipeline.py --stage sft_trial --max-train-steps 5 \
+     --output-dir outputs/runs/experiment
    python scripts/run_full_pipeline.py --stage all \
      --output-dir outputs/runs/experiment
    ```
 
-   或依次运行 `--stage sft`、`--stage rs`、`--stage evaluate`、`--stage figures`。完整数据批次、已完成模型评测和训练 epoch 会被复用；中断训练从最近完整 epoch 的模型及优化器状态恢复。未完成 epoch 重新执行，已发生的 token 费用仍计入共享账本。
+   小试必须取得匹配当前数据、训练配置、LoRA 和模型的完整验收结果，正式 `sft` 才会启动；只有保存成功的旧小试不能放行。也可依次运行 `--stage sft`、`--stage rs`、`--stage evaluate`、`--stage figures`。完整数据批次、已完成模型评测和训练 epoch 会被复用；中断训练从最近完整 epoch 的模型及优化器状态恢复。未完成 epoch 重新执行，已发生的 token 费用仍计入共享账本。
 
 `--eval-blocks`、`--target-samples`（动作）、`--belief-target-samples`（信念）、`--train-games`、`--seed` 可覆盖相应配置；`--models small_classifier,rule_counter` 可选择本地评测子集。使用 `--smoke` 只缩小数据与评测规模，不会把模拟策略改名成真实模型；要避免远端调用，请使用 `--stage local`。
 
@@ -144,7 +146,20 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/check_action_supervision.
 
 `evaluate` 会评估运行目录中的独立残局检查集；也可用 `--stage endgame_evaluate --models small_classifier,rule_counter` 单独执行本地基线检查。LLM 使用相同冻结观测，报告原生输出合法率、强制质疑遵从率、回退率和信念校准，按场景／存活人数显示分母。自由动作没有最优标签，因此不报告最优动作准确率；这组人为覆盖分布也不代表自然对局胜率。已有预测绑定检查集哈希和模型参数，恢复时复用，错配拒绝。
 
-早期验证固定抽取每任务最多 64 条验证样本，在第 0、50、100 步计算诊断，不参与 checkpoint 选择。以后获准真实调用时，可先用 `--stage estimate_trial --max-train-steps 5` 离线估算，再用 `--stage sft_trial --max-train-steps 5` 运行有限步数小试；两者使用同一数据目录和配置。小试在末步额外诊断，结果写入 `models/sft_trial/trial_metadata.json`，不产生正式 adapter，不标为 SFT 完成，也不被 RS 或模型评测自动使用。正式训练仍通过 `--stage sft` 启动，学习率计划仍按完整三轮计算。
+早期验证固定抽取每任务最多 64 条验证样本，在第 0、50、100 步计算诊断，不参与 checkpoint 选择。`--stage estimate_trial --max-train-steps 5` 离线估算小试本体和全部闭环核验调用；`--stage sft_trial --max-train-steps 5` 执行真实小试。两者使用同一数据目录和配置，学习率计划仍按完整三轮计算。
+
+小试另外固定抽取每任务最多 2 条 val 观测，以重复基线前向测数值抖动，检查更新后的分数变化足以区分原始权重；不要求 5 步降低 loss 或提升胜率。保存后新建 sampler，验证原生动作 JSON、两标签原始 log probability 与保存时训练端分数一致。再用相同下一 batch／学习率比较原训练客户端、完整状态／optimizer 恢复客户端及仅加载权重的负对照；前两者须匹配，负对照须可区分。三个诊断更新单独计费，不覆盖已保存的 5 步 checkpoint，也不改变正式 1,500 步。数值信号不足、非法输出、恢复不一致或服务失败均不会产生成功的小试元数据；不会自动加步、放宽容差或重试付费请求。
+
+过程证据和失败阶段保存于 `models/sft_trial/trial_verification.json`。仅所有检查通过后写入 `trial_metadata.json`，它仍不是正式 adapter，RS／主评测不会自动使用小试权重。状态包括更新可辨别性、sampler 检查、训练状态重载和 optimizer 负对照，使用独立协议 `trial_training_sampling_closure_v2`；旧 `trial_complete` 标记不能替代这些证据。
+
+对于本机已有且哈希仍匹配 v3 验收记录的数据，可复用已验证的 5 步主体 token 统计，只分词少量闭环探针和下一 batch 更新估算：
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/refresh_trial_estimate.py \
+  --run-dir outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3_endgame
+```
+
+此命令不生成数据、不跑续玩、不运行模型、不登录 Tinker；源文件或估算口径不匹配时拒绝复用。新的费用总额读取 `trial_total_usd_upper_bound`；`sft_train_and_validation_usd` 仍表示小试主体。当前实现、轻量验证与费用见[小试闭环准备记录](docs/trial_closure_readiness.md)。
 
 此前全答案监督的检查结果见 [v2 历史记录](docs/all_answer_supervision_validation.md)；当前训练准备结果见[训练前修正验收](docs/training_readiness_validation.md)。
 
@@ -185,7 +200,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python scripts/check_action_supervision.
 | `experiment_summary.json` / `figures/` | 统一汇总及对应 SVG 图表 |
 | `ui_models.yaml` | 此次运行可用于界面的模型和分类器配置 |
 
-所有运行和其界面共用 `outputs/budget_usage.jsonl`，上限为本项目授权的 **5000 美元**。每次收费请求前按输入 token 和输出上限预留额度，收到响应后按 token 数结算估算；跨进程锁防止多个界面/任务重复占用额度。结果未知的失败请求保留预留。采样客户端显式关闭 SDK 外层自动重提交（`RetryConfig(enable_retry_logic=False)`），避免一次预算预留对应多个新请求；同请求的底层传输重试机制保留。信念打分的 SDK 内部每次至多额外生成 1 token，两个打分请求按完整前缀加最多 2 个生成 token 保守记账，不假定缓存折扣；`completion_tokens` 仅计实际返回的动作输出，隐藏生成另记 `belief_completion_tokens_upper_bound`，账本标注上界。估算包含全部可接受答案展开、按状态的双任务循环补齐所需的训练 token，以及每 epoch 全部合法验证候选、信念标签和第 0／50／100 步固定验证子集的 forward token；原单答案诊断复用候选结果，不重复调用。`cost_estimate.json` 另列独立残局集每个 LLM 的动作生成与信念打分费用上界，`trial_cost_estimate.json` 只计有限步数小试及其实际验证计划。账本属于 token 费用估算，不是服务商账单；checkpoint 存储费用不包含在其中，正式运行时还需核对账号账单。费率快照来源为 [Tinker 官方价格](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)。
+所有运行和其界面共用 `outputs/budget_usage.jsonl`，上限为本项目授权的 **5000 美元**。每次收费请求前按输入 token 和输出上限预留额度，收到响应后按 token 数结算估算；跨进程锁防止多个界面/任务重复占用额度。结果未知的失败请求保留预留。采样客户端显式关闭 SDK 外层自动重提交（`RetryConfig(enable_retry_logic=False)`），避免一次预算预留对应多个新请求；同请求的底层传输重试机制保留。信念打分的 SDK 内部每次至多额外生成 1 token，两个打分请求按完整前缀加最多 2 个生成 token 保守记账，不假定缓存折扣；`completion_tokens` 仅计实际返回的动作输出，隐藏生成另记 `belief_completion_tokens_upper_bound`，账本标注上界。估算包含全部可接受答案展开、按状态的双任务循环补齐所需的训练 token，以及每 epoch 全部合法验证候选、信念标签和第 0／50／100 步固定验证子集的 forward token；原单答案诊断复用候选结果，不重复调用。`cost_estimate.json` 另列独立残局集每个 LLM 的动作生成与信念打分费用上界，`trial_cost_estimate.json` 分列有限步数主体、闭环前向、三条分支的诊断更新和 sampler 推理上界，`trial_total_usd_upper_bound` 为完整小试报价。账本属于 token 费用估算，不是服务商账单；checkpoint 存储费用不包含在其中，正式运行时还需核对账号账单。费率快照来源为 [Tinker 官方价格](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)。
 
 LoRA 参数使用 [Tinker SDK 实际支持的接口](https://tinker-docs.thinkingmachines.ai/tinker/api-reference/serviceclient/)，checkpoint 默认持久保存。从 checkpoint 初始化训练时，在创建服务会话前核对来源 rank 和 attention／MLP／unembedding 开关；配置缺失或不一致会拒绝，不能以新配置覆盖实际继承的 LoRA 元数据。回放校验会逐步重建公开观测、隐藏手牌、真假标签、结算与终局；模型输出和时延只作为记录保存，不声称能由引擎重新生成。
 

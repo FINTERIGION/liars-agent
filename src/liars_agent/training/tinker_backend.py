@@ -32,6 +32,10 @@ class BudgetExceededError(RuntimeError):
     pass
 
 
+class ModelResponseError(RuntimeError):
+    """A received model response violates the token/probability protocol."""
+
+
 class BudgetLedger:
     """Append-only request reservations shared by one experiment's backend."""
 
@@ -187,11 +191,11 @@ class TinkerBackend:
         self.preflight()
         return self._service
 
-    def sampling_client(self, checkpoint: str | None = None) -> Any:
+    def sampling_client(self, checkpoint: str | None = None, *, fresh: bool = False) -> Any:
         key = checkpoint or self.base_model
         if checkpoint is not None and (not checkpoint.startswith("tinker://") or "/sampler_weights/" not in checkpoint):
             raise ValueError("Inference requires a tinker://.../sampler_weights/... checkpoint.")
-        if key not in self._sampling_clients:
+        if fresh or key not in self._sampling_clients:
             from tinker.lib.retry_handler import RetryConfig
 
             kwargs = {"model_path": checkpoint} if checkpoint else {"base_model": self.base_model}
@@ -246,8 +250,9 @@ class TinkerBackend:
             # A returned response incurred the call even if its scores are unusable.
             self.ledger.complete(reservation, cost, prompt_tokens=len(sequence),
                                  completion_tokens_upper_bound=1, usage_basis="upper_bound")
-            if len(result) != len(sequence) or not isinstance(result[-1], (int, float)) or not math.isfinite(result[-1]):
-                raise RuntimeError("Tinker did not return a finite log probability for the belief label.")
+            if (len(result) != len(sequence) or type(result[-1]) not in (int, float)
+                    or not math.isfinite(result[-1]) or result[-1] > 0):
+                raise ModelResponseError("Tinker did not return a finite nonpositive log probability for the belief label.")
             logprobs.append(float(result[-1]))
             prompt_tokens += len(sequence)
             total_cost += cost
@@ -285,7 +290,7 @@ class TinkerBackend:
         self.ledger.complete(request_id, cost, prompt_tokens=len(tokens) * num_samples,
                              completion_tokens=total_completion)
         if len(outputs) != num_samples:
-            raise RuntimeError(f"Tinker returned {len(outputs)} samples; expected {num_samples}.")
+            raise ModelResponseError(f"Tinker returned {len(outputs)} samples; expected {num_samples}.")
         return outputs
 
     def run_training_batch(self, client: Any, data: list[Any], *,

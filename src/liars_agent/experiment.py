@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -196,6 +197,40 @@ def make_backend(config: dict, output: Path):
                          budget_limit_usd=config["budget_limit_usd"])
 
 
+def trial_settings(config: dict) -> tuple[dict, dict]:
+    from liars_agent.training.trial_verification import normalize_trial_verification_config
+    verification = normalize_trial_verification_config(config["training"].get("trial_verification"))
+    sampling = {key: config["sampling"][key] for key in ("temperature", "top_p", "max_new_tokens")}
+    return verification, sampling
+
+
+def require_verified_trial(config: dict, metadata: dict, splits: dict | None = None) -> None:
+    """A saved trial is usable only if its complete verification actually passed."""
+    from liars_agent.training.action_supervision import require_training_objective
+    verification, sampling = trial_settings(config)
+    require_contract(metadata, "trial metadata")
+    require_training_objective(metadata, config["training"].get("action_supervision"))
+    closure = metadata.get("trial_verification") or {}
+    if (metadata.get("training_status") != "trial_complete" or closure.get("status") != "passed"
+            or closure.get("version") != verification["version"]
+            or closure.get("config") != verification or closure.get("sampling_config") != sampling
+            or closure.get("sampling", {}).get("status") != "passed"
+            or closure.get("training", {}).get("status") != "passed"):
+        raise ValueError("A passed update/sampler/state/optimizer trial verification is required; run sft_trial first.")
+    if (metadata.get("base_model") != config["base_model"] or metadata.get("lora_config") != config["lora"]
+            or closure.get("checkpoints") != {key: metadata.get(key) for key in ("state_path", "sampler_path")}):
+        raise ValueError("Trial model, LoRA configuration or verified checkpoint paths differ.")
+    training = config["training"]
+    expected = {key: training[key] for key in ("learning_rate", "batch_size", "num_epochs", "max_seq_length")}
+    expected.update(seed=training.get("seed", config["seed"]), warmup_ratio=.05)
+    if any(metadata.get("training_metrics", {}).get(key) != value for key, value in expected.items()):
+        raise ValueError("Trial training configuration differs from the requested formal training.")
+    if splits is not None:
+        fingerprint = hashlib.sha256(json.dumps(splits, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        if metadata.get("dataset_sha256") != fingerprint or closure.get("dataset_sha256") != fingerprint:
+            raise ValueError("Trial was verified with a different dataset.")
+
+
 def endgame_directory(config: dict, output: Path) -> Path:
     path = Path(config["evaluation"].get("endgame_coverage_dir", "endgame_coverage"))
     return path if path.is_absolute() else output / path
@@ -226,6 +261,45 @@ def estimate_endgame_evaluation(config: dict, output: Path, backend) -> dict:
         "generated_tokens_upper_bound_per_llm": generated, "usd_upper_bound_per_llm": cost,
         "usd_upper_bound_three_llms": 3 * cost,
         "basis": "one action sample and two single-label score requests per claim; no cache discount; local baselines cost zero"}
+
+
+def estimate_trial_closure(config: dict, backend, splits: dict, max_train_steps: int) -> dict:
+    """Tokenize only the fixed probes and one shared continuation batch."""
+    from liars_agent.training.tinker_train import build_sft_datum, next_logical_batch_indices, training_diagnostic_plan
+    from liars_agent.training.action_supervision import action_target_completions, mean_action_weight, resolve_action_supervision
+    from liars_agent.training.trial_verification import select_trial_probe_rows, build_trial_probe_data, trial_verification_plan
+    from liars_agent.training.trial_sampling import estimate_saved_sampler_verification
+    verification, sampling = trial_settings(config)
+    training = config["training"]
+    policy = training["action_supervision"]
+    seed = training.get("seed", config["seed"])
+    grouped = {task: [row for row in splits["train"] if row["task"] == task] for task in ("action", "belief")}
+    counts = {task: len(rows) for task, rows in grouped.items()}
+    plan = training_diagnostic_plan(counts, training["num_epochs"], training["batch_size"],
+        training.get("diagnostic_steps", [50, 100]), max_train_steps)
+    probes = select_trial_probe_rows(splits, seed, verification["probe_per_task"])
+    probe_data = build_trial_probe_data(probes, backend, training["max_seq_length"], policy)
+    indices = next_logical_batch_indices(counts, training["batch_size"], seed, plan["planned_steps"])
+    mean = mean_action_weight(grouped["action"], policy)
+    batch = []
+    for index in indices["action"]:
+        row = grouped["action"][index]
+        completions = action_target_completions(row, policy)
+        weight = resolve_action_supervision(row, policy)["loss_weight"] / mean / len(completions)
+        batch.extend(build_sft_datum(row, backend, training["max_seq_length"], completion_override=answer,
+            sample_weight=weight, action_supervision_policy=policy) for answer in completions)
+    batch.extend(build_sft_datum(grouped["belief"][index], backend, training["max_seq_length"],
+        action_supervision_policy=policy) for index in indices["belief"])
+    state = trial_verification_plan(probe_data, batch)
+    sampler = estimate_saved_sampler_verification(backend, probes,
+        max_seq_length=training["max_seq_length"], max_new_tokens=sampling["max_new_tokens"])
+    tokens = state["total_processed_tokens"] + sampler["training_forward_tokens"]
+    return {"version": verification["version"], "config": verification, "sampling_config": sampling,
+        "probe_ids": {task: [row["sample_id"] for row in rows] for task, rows in probes.items()},
+        "next_batch_sample_ids": {task: [grouped[task][i]["sample_id"] for i in ids] for task, ids in indices.items()},
+        "state_and_optimizer": state, "sampler": sampler, "total_training_tokens": tokens,
+        "total_usd_upper_bound": backend.estimate_training_cost(tokens) + sampler["sampling_usd_upper_bound"],
+        "scope": "Extra verification only: seven probe forwards, three branch updates including optimizer-reset control, label-reference forward, sampler action/belief calls; checkpoint storage excluded."}
 
 
 def estimate_cost(config: dict, output: Path, *, max_train_steps: int | None = None) -> dict:
@@ -333,6 +407,11 @@ def estimate_cost(config: dict, output: Path, *, max_train_steps: int | None = N
         "pricing_source": PRICING_SOURCE, "pricing_date": PRICING_DATE,
         "scope": "SFT exact dataset token estimate; inference/RS trajectory volume remains to be estimated before paid execution."}
     result["endgame_evaluation"] = estimate_endgame_evaluation(config, output, backend)
+    if max_train_steps is not None:
+        splits = {split: [row for rows in tasks.values() for row in rows] for split, tasks in grouped.items()}
+        result["trial_verification"] = estimate_trial_closure(config, backend, splits, max_train_steps)
+        result["trial_total_usd_upper_bound"] = result["sft_train_and_validation_usd"] + result["trial_verification"]["total_usd_upper_bound"]
+        result["scope"] = "Bounded trial plus complete update/sampler/state/optimizer verification; excludes checkpoint storage and separate endgame evaluation."
     write_json(output / ("trial_cost_estimate.json" if max_train_steps is not None else "cost_estimate.json"), result)
     return result
 
@@ -349,8 +428,11 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
         metadata = read_json(path)
         require_contract(metadata, "model metadata")
         require_training_objective(metadata, policy)
-        if is_trial and metadata.get("max_train_steps") != max_train_steps:
-            raise ValueError("This saved trial has a different step limit; use a new run directory.")
+        if is_trial:
+            if metadata.get("max_train_steps") != max_train_steps:
+                raise ValueError("This saved trial has a different step limit; use a new run directory.")
+            cached_splits = {key: list(read_jsonl(output / f"dataset/{key}.jsonl")) for key in ("train", "val", "test")}
+            require_verified_trial(config, metadata, cached_splits)
         return metadata
     ds_summary = read_json(output / "dataset/data_summary.json")
     require_contract(ds_summary, "dataset summary")
@@ -358,6 +440,12 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
         raise ValueError(f"Dataset shortfall: {ds_summary['shortfall']}; increase num_games in a new run before formal training.")
     splits = {key: list(read_jsonl(output / f"dataset/{key}.jsonl")) for key in ("train", "val", "test")}
     training = config["training"]
+    verification, trial_sampling = trial_settings(config)
+    if stage == "sft":
+        trial_path = output / "models/sft_trial/trial_metadata.json"
+        if not trial_path.exists():
+            raise ValueError("Formal SFT requires the passed sft_trial verification on this dataset first.")
+        require_verified_trial(config, read_json(trial_path), splits)
     resume_from = None
     resume_metadata = None
     if stage == "rs":
@@ -383,6 +471,7 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
         diagnostic_steps=training.get("diagnostic_steps", [50, 100]),
         diagnostic_samples_per_task=training.get("diagnostic_samples_per_task", 64),
         max_train_steps=max_train_steps,
+        trial_verification_config=verification, trial_sampling_config=trial_sampling,
     )
 
 

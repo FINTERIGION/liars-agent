@@ -33,6 +33,13 @@ training:
   seed: 42
   diagnostic_steps: [50, 100]
   diagnostic_samples_per_task: 64
+  trial_verification:
+    version: trial_training_sampling_closure_v2
+    probe_per_task: 2
+    logprob_atol: 1.0e-4
+    logprob_rtol: 1.0e-4
+    min_update_delta: 1.0e-6
+    jitter_multiplier: 3.0
   action_supervision:
     version: empirical_all_answers_weighted_actions_v3
     positive_gap_weight: 0.5  # configured heuristic, not a probability/confidence

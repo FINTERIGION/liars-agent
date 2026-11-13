@@ -102,7 +102,7 @@ class TestExperimentIntegration(unittest.TestCase):
             experiment.write_jsonl(path, rows)
             with patch.object(experiment, 'make_backend', side_effect=AssertionError('API')):
                 with self.assertRaises(ValueError):
-                    experiment.run_pipeline(config, output, 'sft')
+                    experiment.run_pipeline(config, output, 'sft_trial')
 
     def test_old_training_objective_fails_before_backend(self):
         for artifact in ('adapter_metadata.json', 'training_progress.json'):
@@ -125,7 +125,7 @@ class TestExperimentIntegration(unittest.TestCase):
             with patch.object(experiment, 'make_backend', return_value=backend), \
                     patch.object(backend, 'preflight', side_effect=AssertionError('Premature service session')):
                 with self.assertRaisesRegex(ValueError, 'exceeding max_seq_length'):
-                    experiment.run_pipeline(config, output, 'sft')
+                    experiment.run_pipeline(config, output, 'sft_trial')
 
     def test_rs_filters_fallback_without_distilling_probability_or_rationale(self):
         config = small_config(); counts = {'select': 0, 'sample': 0}

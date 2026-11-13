@@ -141,20 +141,29 @@ class TestSupervisionCost(unittest.TestCase):
 
             # A bounded trial uses the same logical order/LR horizon and adds a
             # final diagnostic, without executing or billing unused epochs.
-            trial_backend = TinkerBackend(budget_path=path / "mock_trial_budget.jsonl", sdk=SDK,
-                                           service_client=Service())
-            trial_backend._tokenizer = Tokenizer()
+            from trial_fakes import make_trial_backend
+            trial_backend, trial_service = make_trial_backend(path / "mock_trial_budget.jsonl")
+            config["training"]["learning_rate"] = .1  # Observable dynamics in this explicit scalar test model.
             with patch.object(experiment, "make_backend", return_value=trial_backend):
                 trial_estimate = experiment.estimate_cost(config, path, max_train_steps=3)
             trial = run_tinker_lora_sft([], path / "trial", splits=splits, backend=trial_backend,
-                batch_size=4, num_epochs=3, seed=23, diagnostic_steps=[1, 3],
-                diagnostic_samples_per_task=1, max_train_steps=3)
+                batch_size=4, num_epochs=3, learning_rate=.1, seed=23, diagnostic_steps=[1, 3],
+                diagnostic_samples_per_task=1, max_train_steps=3,
+                trial_verification_config=config["training"]["trial_verification"])
             self.assertEqual(trial_estimate["training_optimizer_steps"], 3)
             self.assertEqual(trial_estimate["training_plan"]["full_validation_epochs"], 1)
             self.assertFalse((path / "trial/adapter_metadata.json").exists())
             self.assertTrue((path / "trial/trial_metadata.json").exists())
-            self.assertAlmostEqual(trial_backend.ledger.snapshot()["estimated_cost_usd"],
-                                   trial_estimate["sft_train_and_validation_usd"])
+            closure = trial_estimate["trial_verification"]
+            self.assertEqual(trial["trial_verification"]["status"], "passed")
+            self.assertEqual(closure["state_and_optimizer"]["diagnostic_optimizer_steps"], 3)
+            ledger = trial_backend.ledger.snapshot()
+            self.assertEqual(ledger["training_tokens"], trial_estimate["balanced_training_tokens"]
+                + trial_estimate["validation_tokens"] + closure["total_training_tokens"])
+            self.assertLessEqual(ledger["estimated_cost_usd"], trial_estimate["trial_total_usd_upper_bound"])
+            unused_tokens = closure["sampler"]["action_generated_tokens_upper_bound"] - ledger["completion_tokens"]
+            self.assertAlmostEqual(trial_estimate["trial_total_usd_upper_bound"] - ledger["estimated_cost_usd"],
+                                   unused_tokens * trial_backend.rates["sample"] / 1_000_000)
 
 
 if __name__ == "__main__":

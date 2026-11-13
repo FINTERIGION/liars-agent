@@ -1,0 +1,228 @@
+{
+  "date": "2026-11-14",
+  "status": "local_preparation_passed_real_trial_pending",
+  "contract": {
+    "rules_version": "liars_bar_research_v2",
+    "observation_version": "public_history_v2",
+    "teacher_version": "pool_prior_counter_continuation_v2",
+    "decision_schema_version": "action_and_binary_belief_v2",
+    "prompt_sha256": "e0b53df0f38b526e5c3c614457ba72a98a56187ee5fc24669adfd0d96e8cb78f"
+  },
+  "trial_version": "trial_training_sampling_closure_v2",
+  "prepared_run": "outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3_endgame",
+  "data_generation_run_this_turn": false,
+  "local_model_experiment_run_this_turn": false,
+  "real_model_api_calls": 0,
+  "source_data_unchanged": true,
+  "dataset_files_sha256": {
+    "config.json": "c62f28c366c639cdbc2cbd0dd75842a5041b5157889a00f9f8dc249f955e2ba9",
+    "dataset/train.jsonl": "71f81152d6f0e8bff46483a8929df81f067ba1b4a82128d7595ef848cf0c703e",
+    "dataset/val.jsonl": "43810e26b865cf37d93a93ba8c6d319c558d51ded4d03e5e4f4ebb4de40d2477",
+    "dataset/test.jsonl": "10e5f7f23b9526819fc51687b9d53186aabaf1e7dac7e0f76246b2fd1bc3c3bd",
+    "dataset/game_splits.json": "fd6a294b2f94f090364c6711745aef0c5a98cc7504adea6beab3b6d2e961b1ea",
+    "augmentation/replacements.jsonl": "edfc27cc13f63f7fc351a4d5ca84d2cce7bd2435b28e09036e63fd7144f48bc9",
+    "augmentation/added_actions.jsonl": "b1c9c75fe4646adec930ef95a75cd048a2f5b4120050b8589964d12a5bd24399"
+  },
+  "prior_full_validation_report": "docs/validation/training_readiness_v3.json",
+  "prior_report_sha256": "b1dd660a7214eb7c588e1b2258286942b4b44cf089cc4619284c580b50fbf915",
+  "small_tokenizer_check": {
+    "observations": 5,
+    "sdk_datums": 6,
+    "max_input_tokens": 2277,
+    "scope": [
+      "clear_action",
+      "tied_action_two_answers",
+      "augmented_forced_action",
+      "augmented_free_action",
+      "belief"
+    ],
+    "checks": [
+      "first_assistant_eos",
+      "supervision_mask",
+      "single_label_belief_mask"
+    ],
+    "status": "passed",
+    "full_dataset_retokenized": false
+  },
+  "offline_tests": {
+    "passed": 85,
+    "subtests_passed": 64,
+    "duration_seconds": 31.03,
+    "transport": "explicit_stateful_in_memory_double_not_real_model",
+    "modules": [
+      "test_trial_pipeline",
+      "test_trial_verification",
+      "test_trial_sensitivity",
+      "test_trial_sampling",
+      "test_supervision_cost",
+      "test_uncertain_training",
+      "test_refresh_trial_estimate",
+      "test_experiment",
+      "test_backend_retry",
+      "test_tinker_backend",
+      "test_action_validation"
+    ]
+  },
+  "closure_estimate": {
+    "version": "trial_training_sampling_closure_v2",
+    "config": {
+      "version": "trial_training_sampling_closure_v2",
+      "probe_per_task": 2,
+      "logprob_atol": 0.0001,
+      "logprob_rtol": 0.0001,
+      "min_update_delta": 1e-06,
+      "jitter_multiplier": 3.0
+    },
+    "sampling_config": {
+      "temperature": 0.2,
+      "top_p": 0.9,
+      "max_new_tokens": 256
+    },
+    "probe_ids": {
+      "action": [
+        "train_14859807547600205990_game_00005_r2_s2_action",
+        "train_9928000258758049445_game_00018_r6_s4_action"
+      ],
+      "belief": [
+        "train_2633589271318024079_game_00010_r5_s5_belief",
+        "train_3782854923426571536_game_00010_r9_s10_belief"
+      ]
+    },
+    "next_batch_sample_ids": {
+      "action": [
+        "train_5651678475775912230_game_00007_r7_s3_action",
+        "train_15139335423399856908_game_00013_r6_s7_action",
+        "train_4396285245471476681_game_00011_r6_s1_action",
+        "train_6046827180401318427_game_00012_r7_s1_action",
+        "train_10447051748189820536_game_00013_r9_s6_action",
+        "train_16092423100992187344_game_00005_r1_s11_action",
+        "train_4177693952626707881_game_00003_r7_s4_action",
+        "train_17695754495944118688_game_00014_r8_s1_action",
+        "train_6887191108719419099_game_00010_r3_s3_action",
+        "train_19758664964042892_game_00016_r3_s1_action",
+        "train_11661994530620260226_game_00007_r3_s3_action",
+        "train_12666205025806422413_game_00002_r2_s0_action",
+        "train_17365478312379223591_game_00010_r3_s4_action",
+        "train_15382404151824048695_game_00018_r5_s0_action",
+        "train_11661994530620260226_game_00002_r3_s3_action",
+        "train_2633589271318024079_game_00017_r4_s5_action"
+      ],
+      "belief": [
+        "train_17365478312379223591_game_00017_r6_s8_belief",
+        "train_14859807547600205990_game_00010_r7_s2_belief",
+        "train_9359485158018520185_game_00006_r11_s4_belief",
+        "train_11753472411591244760_game_00019_r16_s7_belief",
+        "train_11823973391278970518_game_00002_r2_s11_belief",
+        "train_17663641568196559735_game_00002_r4_s2_belief",
+        "train_15233982373196237524_game_00008_r5_s5_belief",
+        "train_12407583287563847670_game_00015_r9_s1_belief",
+        "train_16781042603152432473_game_00009_r8_s7_belief",
+        "train_12407583287563847670_game_00016_r5_s2_belief",
+        "train_8717300616535899893_game_00012_r2_s2_belief",
+        "train_499978949348718476_game_00013_r5_s1_belief",
+        "train_3982529406793723264_game_00017_r7_s2_belief",
+        "train_8626829344899343811_game_00015_r15_s7_belief",
+        "train_11538219209672759786_game_00010_r11_s4_belief",
+        "train_12677341097019495472_game_00008_r4_s1_belief"
+      ]
+    },
+    "state_and_optimizer": {
+      "version": "trial_training_sampling_closure_v2",
+      "probe_forward_calls": 7,
+      "probe_forward_tokens": 50666,
+      "diagnostic_training_batches": 3,
+      "diagnostic_training_tokens": 236304,
+      "diagnostic_optimizer_steps": 3,
+      "state_reload_calls": 2,
+      "total_processed_tokens": 286970,
+      "sdk_calls": {
+        "forward": 7,
+        "forward_backward": 3,
+        "optim_step": 3,
+        "create_training_client_from_state_with_optimizer": 1,
+        "create_training_client_from_state": 1
+      },
+      "scope": "Three caller probes, one reloaded probe, three branch probes and updates; includes weight-only negative control; excludes sampler checks and checkpoint storage."
+    },
+    "sampler": {
+      "training_forward_sequences": 4,
+      "training_forward_tokens": 7346,
+      "action_sample_requests": 2,
+      "belief_label_score_requests": 4,
+      "sampling_prefill_tokens": 10897,
+      "action_generated_tokens_upper_bound": 512,
+      "belief_generated_tokens_upper_bound": 4,
+      "sampling_generated_tokens_upper_bound": 516,
+      "training_forward_usd": 0.010747198,
+      "sampling_usd_upper_bound": 0.0036855119999999997,
+      "total_usd_upper_bound": 0.01443271,
+      "basis": "two training label forwards per belief probe, one native action per action probe, two full-prefix single-label sampler scores per belief probe; no cache discount"
+    },
+    "total_training_tokens": 294316,
+    "total_usd_upper_bound": 0.43426982000000003,
+    "scope": "Extra verification only: seven probe forwards, three branch updates including optimizer-reset control, label-reference forward, sampler action/belief calls; checkpoint storage excluded."
+  },
+  "five_step_body_usd": 4.946012379000001,
+  "trial_total_usd_upper_bound": 5.380282199000001,
+  "formal_sft_and_validation_usd": 286.536586259,
+  "rates_per_million_tokens": {
+    "prefill": 0.3,
+    "sample": 0.807,
+    "train": 1.463
+  },
+  "pricing_snapshot_date": "2026-11-14",
+  "pricing_source": "https://tinker-docs.thinkingmachines.ai/tinker/models.json",
+  "baseline_reuse": {
+    "verified_report": "/home/rxhgg/liars agent/liars-agent/docs/validation/training_readiness_v3.json",
+    "verified_report_sha256": "b1dd660a7214eb7c588e1b2258286942b4b44cf089cc4619284c580b50fbf915",
+    "matched_file_hashes": [
+      "augmentation/added_actions.jsonl",
+      "augmentation/replacements.jsonl",
+      "config.json",
+      "dataset/game_splits.json",
+      "dataset/test.jsonl",
+      "dataset/train.jsonl",
+      "dataset/val.jsonl"
+    ],
+    "matched_baseline_fields": [
+      "balanced_training_tokens",
+      "diagnostic_tokens",
+      "endgame_evaluation",
+      "full_validation_tokens",
+      "pricing_date",
+      "pricing_source",
+      "rates_per_million_tokens",
+      "sft_train_and_validation_usd",
+      "training_expanded_sequences",
+      "training_logical_state_visits",
+      "training_optimizer_steps",
+      "training_plan",
+      "validation_tokens"
+    ],
+    "baseline_body_tokens_reused": 3380733,
+    "body_optimizer_steps": 5,
+    "full_dataset_retokenized": false,
+    "tokenized_scope": "four validation probes and one logical continuation batch; sampler label candidates included",
+    "model_api_calls": 0,
+    "note": "Historical token accounting reused only after exact dataset/config and pricing checks."
+  },
+  "refresh_api_guards": {
+    "calls": 0,
+    "invocations": [],
+    "budget_ledger_unchanged": true
+  },
+  "real_trial_status": "not_run",
+  "real_checkpoint_status": "not_created",
+  "pending_real_validation": [
+    "observable_weight_update",
+    "saved_sampler_native_action_and_belief",
+    "training_state_reload",
+    "optimizer_restore_with_weight_only_negative_control"
+  ],
+  "estimate_exclusions": [
+    "checkpoint_storage",
+    "RS_generation_and_training",
+    "full_game_evaluation",
+    "separate_endgame_evaluation"
+  ]
+}
