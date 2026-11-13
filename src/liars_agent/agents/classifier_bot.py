@@ -1,6 +1,6 @@
 """小型分类器基线智能体 (Small Classifier Baseline).
 
-提取 12 维局部观测统计特征，使用逻辑回归/线性分类器预测上家诈唬概率与最优动作类别，
+提取 12 维局部观测统计特征，使用逻辑回归/线性分类器预测上家诈唬概率，并用固定规则选择动作，
 用于计划书第 4 周要求的“规则策略、小型分类器与零样本/微调模型对照实验”。
 """
 
@@ -11,13 +11,25 @@ import math
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
-from liars_agent.agents.base import BaseAgent, split_play_actions
+from liars_agent.agents.base import BaseAgent, split_play_actions, public_opponent_profile, describe_action
+from liars_agent.contracts import current_contract, require_contract
 from liars_agent.engine.observation import PlayerObservation
 from liars_agent.engine.types import (
     AgentDecisionRecord,
     CandidateAction,
     is_card_truthful,
 )
+
+
+def _classifier_record(obs, **fields):
+    fields["estimated_opponent_style"] = "unknown"
+    fields["belief_source"] = "classifier" if obs.last_claim else "none"
+    fields["opponent_profile"] = public_opponent_profile(obs)
+    if not obs.last_claim:
+        fields["belief_bluff_prob"] = None
+    if len(obs.legal_actions) == 1 and obs.legal_actions[0].action_type == "CHALLENGE":
+        fields["rationale"] = describe_action(obs, obs.legal_actions[0])
+    return AgentDecisionRecord(**fields)
 
 
 def _sigmoid(x: float) -> float:
@@ -40,17 +52,19 @@ def extract_observation_features(obs: PlayerObservation) -> list[float]:
             own_lethal_risk,
             0.0,  # has_claim
             0.0,  # claimed_count_norm
-            0.0,  # comb_bluff_prior
+            0.0,  # capacity_shortage_prior
             0.0,  # claimer_empty_hand
             0.5,  # claimer_hist_bluff_rate
-            0.0,  # claimer_hist_confidence
+            0.0,  # claimer_reveal_sample_strength
             obs.round_id / 6.0,
             len(obs.current_round_history) / 10.0,
         ]
 
     claim = obs.last_claim
-    comb_truth = obs.combinatorial_claim_truth_prior or 0.5
-    comb_bluff_prior = 1.0 - comb_truth
+    comb_truth = obs.hand_capacity_prior
+    if comb_truth is None:
+        comb_truth = 0.5
+    capacity_shortage_prior = 1.0 - comb_truth
     claimer_empty = 1.0 if claim.claimer_remaining_cards == 0 else 0.0
 
     # 统计公开历史中上家的被亮牌诈唬率（若处于消融模式，past_rounds_history 为空则退化为先验 0.5）
@@ -62,7 +76,7 @@ def extract_observation_features(obs: PlayerObservation) -> list[float]:
             if res.was_bluff:
                 bluffs += 1
     hist_bluff_rate = (bluffs + 1.0) / (reveals + 2.0)
-    hist_conf = min(1.0, reveals / 4.0)
+    reveal_strength = min(1.0, reveals / 4.0)
 
     return [
         1.0,
@@ -71,10 +85,10 @@ def extract_observation_features(obs: PlayerObservation) -> list[float]:
         own_lethal_risk,
         1.0,
         claim.claimed_count / 3.0,
-        comb_bluff_prior,
+        capacity_shortage_prior,
         claimer_empty,
         hist_bluff_rate,
-        hist_conf,
+        reveal_strength,
         obs.round_id / 6.0,
         len(obs.current_round_history) / 10.0,
     ]
@@ -90,10 +104,10 @@ class SmallClassifierBot(BaseAgent):
         -0.15,  # own_lethal_risk
         0.20,   # has_claim
         0.95,   # claimed_count_norm
-        2.60,   # comb_bluff_prior
+        2.60,   # capacity_shortage_prior
         0.55,   # claimer_empty_hand
         1.10,   # claimer_hist_bluff_rate
-        0.40,   # claimer_hist_confidence
+        0.40,   # claimer_reveal_sample_strength
         0.08,   # round_id
         0.15,   # step_count
     ]
@@ -108,14 +122,14 @@ class SmallClassifierBot(BaseAgent):
         self.bluff_weights = list(bluff_weights or self.DEFAULT_BLUFF_WEIGHTS)
         self.challenge_prob_cutoff = challenge_prob_cutoff
 
-    def predict_bluff_prob(self, obs: PlayerObservation) -> float:
+    def predict_bluff_prob(self, obs: PlayerObservation) -> float | None:
         if obs.last_claim is None:
-            return 0.0
-        if (obs.combinatorial_claim_truth_prior or 0.0) <= 0.0:
+            return None
+        if (obs.hand_capacity_prior or 0.0) <= 0.0:
             return 1.0
         feats = extract_observation_features(obs)
         logit = sum(w * x for w, x in zip(self.bluff_weights, feats))
-        return round(_sigmoid(logit), 4)
+        return _sigmoid(logit)
 
     def fit_from_replays(
         self,
@@ -131,45 +145,29 @@ class SmallClassifierBot(BaseAgent):
                 was_bluff = step.get("pending_claim_was_bluff")
                 if was_bluff is None:
                     continue
-                obs_dict = step["observation"]
-                # 构造轻量级特征
-                own_hand = tuple(obs_dict.get("own_hand", ()))
-                target_rank = obs_dict.get("target_rank", "Q")
-                hand_len = len(own_hand)
-                own_truth = sum(1 for c in own_hand if is_card_truthful(c, target_rank))
-                own_truth_ratio = own_truth / max(1, hand_len)
-                last_claim = obs_dict.get("last_claim")
-                if not last_claim:
+                observation = PlayerObservation.from_dict(step["observation"])
+                if observation.last_claim is None:
                     continue
-                comb_prior = obs_dict.get("combinatorial_claim_truth_prior")
-                comb_bluff = 1.0 - (comb_prior if comb_prior is not None else 0.5)
-                claimer_seat = last_claim["claimer_seat"]
-                reveals = 0
-                bluffs = 0
-                for r in obs_dict.get("past_rounds_history", []):
-                    if r["claimer_seat"] == claimer_seat:
-                        reveals += 1
-                        if r["was_bluff"]:
-                            bluffs += 1
-                hist_rate = (bluffs + 1.0) / (reveals + 2.0)
-                feats = [
-                    1.0,
-                    hand_len / 5.0,
-                    own_truth_ratio,
-                    0.2,
-                    1.0,
-                    last_claim["claimed_count"] / 3.0,
-                    comb_bluff,
-                    1.0 if last_claim["claimer_remaining_cards"] == 0 else 0.0,
-                    hist_rate,
-                    min(1.0, reveals / 4.0),
-                    obs_dict.get("round_id", 1) / 6.0,
-                    len(obs_dict.get("current_round_history", [])) / 10.0,
-                ]
+                feats = extract_observation_features(observation)
                 samples.append((feats, 1.0 if was_bluff else 0.0))
 
+        return self._fit_features(samples, learning_rate, epochs, l2_reg)
+
+    def fit_from_belief_samples(self, rows, learning_rate=.05, epochs=15, l2_reg=1e-3):
+        samples = []
+        for row in rows:
+            require_contract(row, "classifier belief sample")
+            if row.get("task") != "belief" or row.get("completion") not in ("0", "1"):
+                raise ValueError("Classifier requires true binary belief samples.")
+            obs = PlayerObservation.from_dict(row["observation"])
+            if obs.last_claim is None:
+                raise ValueError("Binary belief target requires a pending claim.")
+            samples.append((extract_observation_features(obs), float(row["completion"])))
+        return self._fit_features(samples, learning_rate, epochs, l2_reg)
+
+    def _fit_features(self, samples, learning_rate, epochs, l2_reg):
         if not samples:
-            return {"num_samples": 0, "final_bce_loss": 0.0}
+            raise ValueError("Classifier has no labelled training observations.")
 
         weights = list(self.bluff_weights)
         final_loss = 0.0
@@ -202,7 +200,7 @@ class SmallClassifierBot(BaseAgent):
             cutoff -= 0.04
 
         if challenge_actions and (len(obs.legal_actions) == 1 or bluff_prob >= cutoff):
-            return challenge_actions[0], AgentDecisionRecord(
+            return challenge_actions[0], _classifier_record(obs,
                 belief_bluff_prob=bluff_prob,
                 estimated_opponent_style="classifier_scored",
                 rationale=f"[SmallClassifier] 线性分类器预测诈唬概率={bluff_prob:.2f} >= 阈值={cutoff:.2f}，执行质疑。",
@@ -211,15 +209,15 @@ class SmallClassifierBot(BaseAgent):
         if truthful:
             # 分类器倾向稳健打出1~2张真牌
             chosen = truthful[0]
-            return chosen, AgentDecisionRecord(
+            return chosen, _classifier_record(obs,
                 belief_bluff_prob=bluff_prob if obs.last_claim else None,
                 estimated_opponent_style="classifier_scored",
-                rationale=f"[SmallClassifier] 预测上家诈唬率={bluff_prob:.2f} 低于阈值，稳健打出真牌。",
+                rationale="[SmallClassifier] 无待回应声称，打出真牌。" if bluff_prob is None else f"[SmallClassifier] 预测上家诈唬率={bluff_prob:.2f} 低于阈值，稳健打出真牌。",
             )
 
         bluff_candidates = sorted(pure_bluff + mixed_bluff, key=lambda a: len(a.cards))
         chosen = bluff_candidates[0] if bluff_candidates else obs.legal_actions[0]
-        return chosen, AgentDecisionRecord(
+        return chosen, _classifier_record(obs,
             belief_bluff_prob=bluff_prob if obs.last_claim else None,
             estimated_opponent_style="classifier_scored",
             rationale="[SmallClassifier] 无真牌可出，选择单张假牌降低被抓风险。",
@@ -231,6 +229,7 @@ class SmallClassifierBot(BaseAgent):
         out.write_text(
             json.dumps(
                 {
+                    "contract": current_contract(),
                     "name": self.name,
                     "bluff_weights": self.bluff_weights,
                     "challenge_prob_cutoff": self.challenge_prob_cutoff,
@@ -239,3 +238,14 @@ class SmallClassifierBot(BaseAgent):
             ),
             encoding="utf-8",
         )
+
+    @classmethod
+    def load_weights(cls, path: str | Path, name: Optional[str] = None) -> SmallClassifierBot:
+        """Load the same learned weights and decision threshold used in evaluation."""
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        require_contract(data, "classifier weights")
+        weights = [float(value) for value in data["bluff_weights"]]
+        if len(weights) != len(cls.DEFAULT_BLUFF_WEIGHTS) or not all(math.isfinite(w) for w in weights):
+            raise ValueError("Classifier weights must contain 12 finite values.")
+        return cls(name=name or data.get("name", "small_classifier"), bluff_weights=weights,
+                   challenge_prob_cutoff=float(data["challenge_prob_cutoff"]))

@@ -3,6 +3,7 @@
 from liars_agent.agents.base import (
     BaseAgent,
     estimate_bayesian_bluff_belief,
+    estimate_heuristic_bluff_belief,
     split_play_actions,
 )
 from liars_agent.agents.classifier_bot import (
@@ -41,6 +42,7 @@ __all__ = [
     "build_user_prompt",
     "create_rule_agent",
     "estimate_bayesian_bluff_belief",
+    "estimate_heuristic_bluff_belief",
     "extract_observation_features",
     "parse_llm_decision_json",
     "split_play_actions",

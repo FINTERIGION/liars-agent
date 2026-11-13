@@ -5,9 +5,12 @@ from liars_agent.evaluation.duplicate_runner import (
     run_duplicate_evaluation,
 )
 from liars_agent.evaluation.metrics import (
+    compute_block_bootstrap_ci,
     compute_behavioral_profile,
     compute_belief_calibration,
     compute_paired_bootstrap_ci,
+    compute_probability_calibration,
+    compute_paired_probability_metrics,
     compute_risk_and_hand_stratified_diagnosis,
 )
 from liars_agent.evaluation.plots import (
@@ -19,9 +22,12 @@ from liars_agent.evaluation.plots import (
 
 __all__ = [
     "DuplicateEvalResult",
+    "compute_block_bootstrap_ci",
     "compute_behavioral_profile",
     "compute_belief_calibration",
     "compute_paired_bootstrap_ci",
+    "compute_probability_calibration",
+    "compute_paired_probability_metrics",
     "compute_risk_and_hand_stratified_diagnosis",
     "generate_fig1_winrate_svg",
     "generate_fig2_history_ablation_svg",

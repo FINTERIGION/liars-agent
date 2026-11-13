@@ -1,98 +1,183 @@
-"""Gradio 对局与终局复盘工作台；未安装 Gradio 时提供命令行演示."""
+"""Gradio human games and post-game decision replay workbench."""
 
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
-from typing import Any, Optional
+import secrets
+from typing import Any, Callable
+from uuid import uuid4
 
-from liars_agent.agents.base import BaseAgent
+from liars_agent.agents.base import BaseAgent, describe_action, public_opponent_profile
 from liars_agent.agents.classifier_bot import SmallClassifierBot
-from liars_agent.agents.llm_agent import LLMAgent
 from liars_agent.agents.rule_bots import create_rule_agent
+from liars_agent.contracts import require_contract
 from liars_agent.engine.replay import GameReplayBundle, verify_replay_determinism
 from liars_agent.engine.state import LiarsBarEngine
+from liars_agent.engine.types import AgentDecisionRecord
 from liars_agent.evaluation.metrics import compute_behavioral_profile
+
+AgentFactory = Callable[[str, int], BaseAgent]
+RULE_CHOICES = [
+    "honest_conservative", "aggressive_bluffer", "card_counter",
+    "paranoid_hunter", "chameleon_adaptive",
+]
+MODEL_MODES = {
+    "qwen35_9b_zero_shot": "zero_shot",
+    "qwen35_9b_lora_sft": "lora_sft",
+    "qwen35_9b_lora_rs": "lora_rs_improved",
+}
+
+
+class _HumanPlayer(BaseAgent):
+    def __init__(self) -> None:
+        super().__init__("human_player", "human")
+
+    def select_action(self, obs):
+        raise RuntimeError("The human player must choose an action in the UI.")
 
 
 def build_agent_by_spec(spec: str, seed: int = 42) -> BaseAgent:
-    """根据界面下拉菜单选择的名称构造智能体."""
-    if spec == "qwen35_9b_lora_sft":
-        return LLMAgent(name=spec, mode="lora_sft", seed=seed)
-    if spec == "qwen35_9b_lora_rs":
-        return LLMAgent(name=spec, mode="lora_rs_improved", seed=seed)
-    if spec == "qwen35_9b_zero_shot":
-        return LLMAgent(name=spec, mode="zero_shot", seed=seed)
+    """Build agents that need no model credentials or training checkpoint."""
+    if spec == "human":
+        return _HumanPlayer()
+    if spec in MODEL_MODES:
+        raise ValueError("A model configuration is required for a language-model player.")
     if spec == "small_classifier":
-        return SmallClassifierBot(name=spec)
+        raise ValueError("Trained classifier weights are required.")
     return create_rule_agent(spec, name=spec, seed=seed)
 
 
-class InteractiveSessionManager:
-    """管理单人练习（Seat 0 为人类或指定 AI，Seat 1..3 为可配置 AI 对手）与决策复盘."""
+def configured_agent_factory(config: dict[str, Any]) -> AgentFactory:
+    """Share a model service while keeping each player's game state separate."""
+    require_contract(config, "UI model config")
+    backend = None
+    sampling = config.get("sampling", {})
+    if sampling.get("fallback_strategy", "card_counter_safe") != "card_counter_safe":
+        raise ValueError("The supported model fallback is card_counter_safe.")
 
-    def __init__(self) -> None:
-        self.engine: Optional[LiarsBarEngine] = None
+    def factory(spec: str, seed: int) -> BaseAgent:
+        nonlocal backend
+        if spec == "small_classifier":
+            return SmallClassifierBot.load_weights(config["classifier_weights"])
+        if spec not in MODEL_MODES:
+            return build_agent_by_spec(spec, seed)
+        from liars_agent.agents.llm_agent import LLMAgent
+        from liars_agent.training.tinker_backend import TinkerBackend
+
+        if backend is None:
+            backend = TinkerBackend(
+                base_model=config["base_model"],
+                budget_path=config["budget_path"],
+                budget_limit_usd=config["budget_limit_usd"],
+            )
+        adapter = None
+        if spec.endswith("lora_sft"):
+            adapter = config["sft_adapter"]
+        elif spec.endswith("lora_rs"):
+            adapter = config["rs_adapter"]
+        return LLMAgent(
+            name=spec, mode=MODEL_MODES[spec], model_version=config["base_model"],
+            backend=backend, adapter_path=adapter, seed=seed,
+            temperature=sampling.get("temperature", 0.2),
+            top_p=sampling.get("top_p", 0.9),
+            max_new_tokens=sampling.get("max_new_tokens", 256),
+        )
+
+    return factory
+
+
+class InteractiveSessionManager:
+    """One browser session's game, human seat and completed replay."""
+
+    def __init__(self, agent_factory: AgentFactory = build_agent_by_spec) -> None:
+        self.agent_factory = agent_factory
+        self.engine: LiarsBarEngine | None = None
         self.agents: list[BaseAgent] = []
-        self.human_seat: Optional[int] = 0
-        self.latest_replay: Optional[GameReplayBundle] = None
+        self.human_seat: int | None = 0
+        self.latest_replay: GameReplayBundle | None = None
+        self.ai_error: str | None = None
+        self.debug_seed_enabled = False
 
     def start_game(
         self,
         seat0_spec: str = "human",
         seat1_spec: str = "honest_conservative",
         seat2_spec: str = "aggressive_bluffer",
-        seat3_spec: str = "qwen35_9b_lora_sft",
-        game_seed: int = 2026,
+        seat3_spec: str = "card_counter",
+        game_seed: int | None = None,
     ) -> dict[str, Any]:
-        self.engine = LiarsBarEngine(game_id=f"ui_game_{game_seed}", game_seed=game_seed)
-        self.latest_replay = None
-        self.human_seat = 0 if seat0_spec == "human" else None
+        """Create an unpredictable game by default; an explicit seed is debugging only."""
         specs = [seat0_spec, seat1_spec, seat2_spec, seat3_spec]
-        self.agents = [
-            build_agent_by_spec(
-                "qwen35_9b_lora_sft" if s == "human" else s, seed=game_seed + idx
-            )
-            for idx, s in enumerate(specs)
-        ]
-        if self.human_seat is not None:
-            self.agents[0].name = "human_player"
-
+        if "human" in specs[1:]:
+            raise ValueError("Only Seat 0 can be controlled by a human.")
+        self.debug_seed_enabled = game_seed is not None
+        environment_seed = secrets.randbits(128) if game_seed is None else game_seed
+        agents = [self.agent_factory(spec, secrets.randbits(64) if game_seed is None else game_seed + idx)
+                  for idx, spec in enumerate(specs)]
+        self.engine = LiarsBarEngine(game_id=f"ui_{uuid4().hex}", game_seed=environment_seed)
+        self.human_seat = 0 if seat0_spec == "human" else None
+        self.agents = agents
+        self.latest_replay = None
+        self.ai_error = None
         self._advance_ai_turns_until_human_or_end()
         return self.get_current_view()
 
     def _advance_ai_turns_until_human_or_end(self) -> None:
         assert self.engine is not None
+        self.ai_error = None
         while not self.engine.is_game_over():
             turn = self.engine.current_turn_seat
             if self.human_seat is not None and turn == self.human_seat:
                 break
             obs = self.engine.get_observation(turn)
-            act, rec = self.agents[turn].select_action(obs)
+            try:
+                act, rec = self.agents[turn].select_action(obs)
+            except Exception as exc:
+                # Retain the exact pending turn and every completed step for retry.
+                self.ai_error = f"Seat {turn}: {type(exc).__name__}: {exc}"
+                return
             self.engine.step(act, rec)
-
         if self.engine.is_game_over():
             self.latest_replay = GameReplayBundle.from_engine(
                 self.engine, seat_agent_names=[a.name for a in self.agents]
             )
 
+    def resume_ai_turns(self) -> dict[str, Any]:
+        if self.engine is None or self.engine.is_game_over():
+            raise ValueError("Game is not active.")
+        if self.human_seat is not None and self.engine.current_turn_seat == self.human_seat:
+            raise ValueError("It is the human player's turn.")
+        self._advance_ai_turns_until_human_or_end()
+        return self.get_current_view()
+
     def submit_human_action(self, action_id: str) -> dict[str, Any]:
         if self.engine is None or self.engine.is_game_over():
-            return {"error": "Game is not active."}
-        obs = self.engine.get_observation(self.engine.current_turn_seat)
-        _, ai_rec = self.agents[0].select_action(obs)
-        self.engine.step(action_id, decision_record=ai_rec)
+            raise ValueError("Game is not active.")
+        if self.human_seat is None or self.engine.current_turn_seat != self.human_seat:
+            raise ValueError("It is not the human player's turn.")
+        obs = self.engine.get_observation(self.human_seat)
+        action = next((action for action in obs.legal_actions if action.action_id == action_id), None)
+        if action is None:
+            raise ValueError("Action is not legal in the current state.")
+        self.engine.step(action, decision_record=AgentDecisionRecord(
+            rationale=describe_action(obs, action), rationale_source="action_description",
+            belief_source="not_requested", opponent_profile=public_opponent_profile(obs),
+        ))
         self._advance_ai_turns_until_human_or_end()
         return self.get_current_view()
 
     def get_current_view(self) -> dict[str, Any]:
         if self.engine is None:
             return {"status": "idle"}
-        obs_seat = self.human_seat if self.human_seat is not None else self.engine.current_turn_seat
+        # The human always sees their own seat, including after elimination.
+        obs_seat = self.human_seat if self.human_seat is not None else 0
         obs = self.engine.get_observation(obs_seat)
         return {
+            "status": "paused_ai" if self.ai_error else "finished" if self.engine.is_game_over() else "active",
             "game_id": self.engine.game_id,
+            "debug_seed_enabled": self.debug_seed_enabled,
+            "ai_error": self.ai_error,
             "is_game_over": self.engine.is_game_over(),
             "winner_seat": self.engine.winner_seat,
             "current_turn_seat": self.engine.current_turn_seat,
@@ -100,113 +185,150 @@ class InteractiveSessionManager:
             "total_logged_steps": len(self.engine.step_truth_logs),
         }
 
+    def human_action_choices(self) -> list[tuple[str, str]]:
+        if (self.engine is None or self.engine.is_game_over() or self.human_seat is None
+                or self.engine.current_turn_seat != self.human_seat):
+            return []
+        actions = self.engine.get_observation(self.human_seat).legal_actions
+        return [
+            ("质疑上家" if action.action_type == "CHALLENGE"
+             else f"出 {len(action.cards)} 张：{' / '.join(action.cards)}", action.action_id)
+            for action in actions
+        ]
+
     def inspect_replay_step(self, step_index: int) -> dict[str, Any]:
-        """仅整场结束后开放所有玩家的决策时观测和事后真值."""
+        """Private cards and decision-time observations become visible at game end."""
         if self.engine is None:
             return {"status": "idle"}
         if not self.engine.is_game_over():
-            return {"status": "整场对局结束后开放完整复盘。", "current_view": self.get_current_view()}
+            return {
+                "status": "对局结束后开放完整决策复盘。",
+                "current_view": self.get_current_view(),
+            }
         if not self.engine.step_truth_logs:
             return {"error": "No steps recorded yet."}
-        idx = max(0, min(len(self.engine.step_truth_logs) - 1, step_index))
-        step_log = self.engine.step_truth_logs[idx]
-        obs = step_log.observation
-        actor = step_log.actor_seat
-        actor_shots = 0
-        actor_lethal_prob = 1.0 / 6.0
-        for p in obs["players_public_status"]:
-            if p["seat"] == actor:
-                actor_shots = p["shots_taken"]
-                actor_lethal_prob = p["next_shot_lethal_prob"]
-                break
-
+        idx = max(0, min(len(self.engine.step_truth_logs) - 1, int(step_index)))
+        step = self.engine.step_truth_logs[idx]
         return {
             "step_index": idx,
             "total_steps": len(self.engine.step_truth_logs),
-            "round_id": step_log.round_id,
-            "step_id": step_log.step_id,
-            "actor_seat": actor,
-            "actor_agent": self.agents[actor].name if actor < len(self.agents) else f"Seat_{actor}",
-            "decision_time_visible": {
-                "target_rank": step_log.target_rank,
-                "own_hand": obs["own_hand"],
-                "own_shots_taken": actor_shots,
-                "own_next_shot_lethal_prob": actor_lethal_prob,
-                "last_claim": obs["last_claim"],
-                "combinatorial_claim_truth_prior": obs["combinatorial_claim_truth_prior"],
-                "legal_actions": obs["legal_actions"],
-            },
+            "round_id": step.round_id,
+            "step_id": step.step_id,
+            "actor_seat": step.actor_seat,
+            "actor_agent": self.agents[step.actor_seat].name,
+            "action_description": step.decision_record.get("rationale", ""),
+            "description_source": step.decision_record.get("rationale_source", "unknown"),
+            "decision_time_visible": step.observation,
             "agent_decision_and_belief": {
-                "chosen_action": step_log.chosen_action,
-                "belief_bluff_prob": step_log.decision_record.get("belief_bluff_prob"),
-                "estimated_opponent_style": step_log.decision_record.get("estimated_opponent_style"),
-                "rationale": step_log.decision_record.get("rationale"),
+                "chosen_action": step.chosen_action,
+                **step.decision_record,
             },
             "post_hoc_ground_truth": {
-                "all_players_true_hands": {str(s): cards for s, cards in step_log.ground_truth_hands.items()},
-                "all_players_fatal_chambers": {str(s): slot for s, slot in step_log.ground_truth_fatal_chambers.items()},
-                "pending_claim_actual_cards": step_log.pending_claim_actual_cards,
-                "pending_claim_was_bluff": step_log.pending_claim_was_bluff,
-                "round_resolution": step_log.round_resolution,
+                "all_players_true_hands": {str(seat): cards for seat, cards in step.ground_truth_hands.items()},
+                "all_players_fatal_chambers": {str(seat): slot for seat, slot in step.ground_truth_fatal_chambers.items()},
+                "pending_claim_actual_cards": step.pending_claim_actual_cards,
+                "pending_claim_was_bluff": step.pending_claim_was_bluff,
+                "round_resolution": step.round_resolution,
             },
         }
 
     def get_session_profiles(self) -> dict[str, Any]:
-        if self.engine is None or not self.engine.is_game_over() or self.latest_replay is None:
+        if self.latest_replay is None:
             return {}
-        rep_dict = self.latest_replay.to_dict()
-        profiles = {}
-        for name in sorted(set(self.latest_replay.seat_agent_names)):
-            profiles[name] = compute_behavioral_profile([rep_dict], name)
+        replay = self.latest_replay.to_dict()
         return {
             "replay_deterministic_verified": verify_replay_determinism(self.latest_replay),
             "trajectory_hash": self.latest_replay.compute_trajectory_hash(),
-            "profiles": profiles,
+            "profiles": {
+                name: compute_behavioral_profile([replay], name)
+                for name in sorted(set(self.latest_replay.seat_agent_names))
+            },
         }
 
 
-def create_ui():
-    """构建界面；每个浏览器会话独立保存对局，终局前禁止查看真值。"""
+def create_ui(model_config: dict[str, Any] | None = None):
+    """Construct the UI without starting a server (also used by UI tests)."""
     import gradio as gr
 
-    agent_choices = [
-        "human", "qwen35_9b_lora_sft", "qwen35_9b_lora_rs", "qwen35_9b_zero_shot",
-        "small_classifier", "honest_conservative", "aggressive_bluffer",
-        "card_counter", "paranoid_hunter", "chameleon_adaptive",
-    ]
+    config = dict(model_config or {})
+    agent_factory = configured_agent_factory(config) if config else build_agent_by_spec
+    ai_choices = list(RULE_CHOICES)
+    if config.get("classifier_weights"):
+        ai_choices.append("small_classifier")
+    if config.get("base_model"):
+        ai_choices.append("qwen35_9b_zero_shot")
+    if config.get("sft_adapter"):
+        ai_choices.append("qwen35_9b_lora_sft")
+    if config.get("rs_adapter"):
+        ai_choices.append("qwen35_9b_lora_rs")
+
     with gr.Blocks(title="骗子酒馆 AI 决策复盘工作台") as demo:
         session_state = gr.State(None)
-        gr.Markdown("# 骗子酒馆 AI — 对局与终局复盘\n对局中仅显示玩家可见信息；整场结束后开放所有步骤的真值复盘。")
+        gr.Markdown("# 骗子酒馆 AI — 对局练习与决策复盘\n选择合法动作出牌；完整对局结束后可查看每一步的决策和底牌。")
         with gr.Row():
-            s0 = gr.Dropdown(agent_choices, value="qwen35_9b_lora_sft", label="Seat 0")
-            s1 = gr.Dropdown(agent_choices[1:], value="honest_conservative", label="Seat 1")
-            s2 = gr.Dropdown(agent_choices[1:], value="aggressive_bluffer", label="Seat 2")
-            s3 = gr.Dropdown(agent_choices[1:], value="card_counter", label="Seat 3")
-            seed_in = gr.Number(value=2026, label="对局随机种子", precision=0)
-            start_btn = gr.Button("开始/模拟对局", variant="primary")
+            s0 = gr.Dropdown(["human", *ai_choices], value="human", label="Seat 0")
+            s1 = gr.Dropdown(ai_choices, value="honest_conservative", label="Seat 1")
+            s2 = gr.Dropdown(ai_choices, value="aggressive_bluffer", label="Seat 2")
+            s3 = gr.Dropdown(ai_choices, value="card_counter", label="Seat 3")
+            start_btn = gr.Button("开始新对局", variant="primary")
+        with gr.Row():
+            debug_seed = gr.Checkbox(value=False, label="调试：使用固定环境种子")
+            seed_in = gr.Number(value=2026, label="仅用于复现调试的种子", precision=0, interactive=False)
         state_out = gr.JSON(label="当前玩家视图 / 结局")
         with gr.Row():
-            step_slider = gr.Slider(0, 1, value=0, step=1, interactive=False, label="终局复盘步骤")
-            inspect_btn = gr.Button("查看终局复盘", interactive=False)
-        replay_out = gr.JSON(label="单步决策复盘")
+            action_in = gr.Dropdown([], label="选择合法动作", interactive=False)
+            action_btn = gr.Button("提交动作", interactive=False)
+            resume_btn = gr.Button("继续 AI 回合", interactive=False)
+        ai_status = gr.Markdown()
+        with gr.Row():
+            step_slider = gr.Slider(0, 1, value=0, step=1, interactive=False, label="复盘步骤")
+            inspect_btn = gr.Button("查看决策复盘", interactive=False)
+        replay_out = gr.JSON(label="终局复盘：动作说明、概率来源与事后真值")
         profile_out = gr.JSON(label="本局行为画像与回放校验")
 
-        def on_start(a0, a1, a2, a3, seed):
-            session = InteractiveSessionManager()
-            view = session.start_game(a0, a1, a2, a3, int(seed))
-            finished = session.engine.is_game_over()
-            total_steps = len(session.engine.step_truth_logs)
+        def render(session: InteractiveSessionManager):
+            choices = session.human_action_choices()
+            finished = session.engine is not None and session.engine.is_game_over()
+            total_steps = len(session.engine.step_truth_logs) if session.engine else 0
             return (
-                session, view, session.inspect_replay_step(0), session.get_session_profiles(),
+                session, session.get_current_view(),
+                gr.Dropdown(choices=choices, value=choices[0][1] if choices else None, interactive=bool(choices)),
+                gr.Button(interactive=bool(choices)),
+                gr.Button(interactive=bool(session.ai_error)),
+                f"AI 回合暂停：{session.ai_error}。已完成步骤保留，可点击继续。" if session.ai_error else "",
                 gr.Slider(minimum=0, maximum=max(1, total_steps - 1), value=0, interactive=finished),
                 gr.Button(interactive=finished),
+                session.inspect_replay_step(0), session.get_session_profiles(),
             )
 
-        start_btn.click(
-            on_start, [s0, s1, s2, s3, seed_in],
-            [session_state, state_out, replay_out, profile_out, step_slider, inspect_btn],
-            api_name="start_game",
-        )
+        def on_start(a0, a1, a2, a3, use_debug_seed, seed):
+            session = InteractiveSessionManager(agent_factory)
+            session.start_game(a0, a1, a2, a3, int(seed) if use_debug_seed else None)
+            return render(session)
+
+        def on_action(session, action_id):
+            if session is None:
+                raise gr.Error("请先开始对局。")
+            try:
+                session.submit_human_action(action_id)
+            except ValueError as exc:
+                raise gr.Error(str(exc)) from exc
+            return render(session)
+
+        def on_resume(session):
+            if session is None:
+                raise gr.Error("请先开始对局。")
+            try:
+                session.resume_ai_turns()
+            except ValueError as exc:
+                raise gr.Error(str(exc)) from exc
+            return render(session)
+
+        outputs = [session_state, state_out, action_in, action_btn, resume_btn, ai_status, step_slider, inspect_btn, replay_out, profile_out]
+        start_btn.click(on_start, [s0, s1, s2, s3, debug_seed, seed_in], outputs, api_name="start_game")
+        action_btn.click(on_action, [session_state, action_in], outputs, api_name="submit_action")
+        resume_btn.click(on_resume, [session_state], outputs, api_name="resume_ai")
+        debug_seed.change(lambda enabled: gr.Number(interactive=enabled), debug_seed, seed_in, api_name=False)
         inspect_btn.click(
             lambda session, index: session.inspect_replay_step(int(index)) if session else {"status": "idle"},
             [session_state, step_slider], replay_out, api_name="inspect_replay",
@@ -214,25 +336,18 @@ def create_ui():
     return demo
 
 
-def launch_ui(host: str = "127.0.0.1", port: int = 7860) -> None:
-    """启动 Gradio；若未安装，则运行完整 AI 对局的命令行演示。"""
-    try:
-        demo = create_ui()
-    except ImportError:
-        print("[Info] Gradio not installed; running CLI demo instead.")
-        session = InteractiveSessionManager()
-        view = session.start_game(
-            seat0_spec="qwen35_9b_lora_sft", seat1_spec="honest_conservative",
-            seat2_spec="aggressive_bluffer", seat3_spec="card_counter", game_seed=2026,
-        )
-        print(json.dumps(view, indent=2, ensure_ascii=False))
-        return
-    demo.launch(server_name=host, server_port=port)
+def launch_ui(host: str = "127.0.0.1", port: int = 7860, model_config: dict[str, Any] | None = None) -> None:
+    create_ui(model_config).launch(server_name=host, server_port=port)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Launch Liar's Bar AI Workbench UI")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7860)
+    parser.add_argument("--model-config", type=Path, help="Pipeline-generated model/checkpoint YAML")
     args = parser.parse_args()
-    launch_ui(host=args.host, port=args.port)
+    config = None
+    if args.model_config:
+        import yaml
+        config = yaml.safe_load(args.model_config.read_text(encoding="utf-8"))
+    launch_ui(host=args.host, port=args.port, model_config=config)

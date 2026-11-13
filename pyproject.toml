@@ -27,6 +27,8 @@ full = [
     "gradio>=4.0.0",
     "pytest>=7.4.0",
     "openai>=1.0.0",
+    "tinker>=0.39.0,<0.40",
+    "transformers>=5.0,<6",
 ]
 
 [tool.setuptools.packages.find]

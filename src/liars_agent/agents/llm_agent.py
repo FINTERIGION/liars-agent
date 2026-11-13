@@ -1,407 +1,188 @@
-"""支持 Tinker / OpenAI 接口与离线策略适配器的 Qwen3.5-9B 语言模型智能体."""
+"""Qwen decision agent backed exclusively by real Tinker sampling."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import os
-import random
-import time
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Optional, Tuple
+from typing import Any, Literal
 
-from liars_agent.agents.base import (
-    BaseAgent,
-    estimate_bayesian_bluff_belief,
-    split_play_actions,
-)
-from liars_agent.agents.prompt_builder import (
-    SYSTEM_PROMPT,
-    build_user_prompt,
-    parse_llm_decision_json,
-)
+from liars_agent.agents.base import BaseAgent, public_opponent_profile, describe_action
+from liars_agent.agents.prompt_builder import (SYSTEM_PROMPT, BELIEF_SYSTEM_PROMPT, build_user_prompt,
+    build_bluff_user_prompt, validate_action_decision)
+from liars_agent.contracts import require_contract
+from liars_agent.agents.rule_bots import CardCounterBot
 from liars_agent.engine.observation import PlayerObservation
-from liars_agent.engine.types import (
-    AgentDecisionRecord,
-    CandidateAction,
-    is_card_truthful,
-)
+from liars_agent.engine.types import AgentDecisionRecord, CandidateAction
 
 ModelMode = Literal["zero_shot", "lora_sft", "lora_rs_improved", "remote_api"]
 
 
 @dataclass
 class CostAndFallbackTracker:
-    """记录模型推理调用次数、Token 消耗、估算成本与非法动作回退统计."""
-
     model_version: str
     total_calls: int = 0
+    api_calls: int = 0
     fallback_count: int = 0
+    belief_calls: int = 0
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
+    belief_generated_tokens_upper_bound: int = 0
     total_latency_ms: float = 0.0
     fallback_events: list[dict[str, Any]] = field(default_factory=list)
-    price_per_1m_prompt_tokens: float = 0.15
-    price_per_1m_completion_tokens: float = 0.45
+    price_per_1m_prompt_tokens: float = 0.30
+    price_per_1m_completion_tokens: float = 0.807
 
     @property
     def illegal_output_rate(self) -> float:
-        if self.total_calls == 0:
-            return 0.0
-        return self.fallback_count / self.total_calls
+        return self.fallback_count / max(1, self.total_calls)
 
     @property
     def estimated_cost_usd(self) -> float:
-        p_cost = (self.total_prompt_tokens / 1_000_000.0) * self.price_per_1m_prompt_tokens
-        c_cost = (
-            self.total_completion_tokens / 1_000_000.0
-        ) * self.price_per_1m_completion_tokens
-        return round(p_cost + c_cost, 6)
+        return (self.total_prompt_tokens * self.price_per_1m_prompt_tokens +
+                (self.total_completion_tokens + self.belief_generated_tokens_upper_bound) *
+                self.price_per_1m_completion_tokens) / 1_000_000
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "model_version": self.model_version,
-            "total_calls": self.total_calls,
-            "fallback_count": self.fallback_count,
-            "illegal_output_rate": round(self.illegal_output_rate, 4),
-            "total_prompt_tokens": self.total_prompt_tokens,
-            "total_completion_tokens": self.total_completion_tokens,
-            "avg_latency_ms": round(self.total_latency_ms / max(1, self.total_calls), 2),
-            "estimated_cost_usd": self.estimated_cost_usd,
-        }
+        return {"model_version": self.model_version, "total_calls": self.total_calls,
+                "api_calls": self.api_calls, "fallback_count": self.fallback_count, "belief_calls": self.belief_calls,
+                "illegal_output_rate": self.illegal_output_rate,
+                "total_prompt_tokens": self.total_prompt_tokens,
+                "total_completion_tokens": self.total_completion_tokens,
+                "belief_generated_tokens_upper_bound": self.belief_generated_tokens_upper_bound,
+                "avg_latency_ms": self.total_latency_ms / max(1, self.api_calls),
+                "estimated_cost_usd": self.estimated_cost_usd}
 
 
 class LLMAgent(BaseAgent):
-    """Qwen3.5-9B 语言模型决策智能体（支持 Tinker API 远端采样与确定性本地策略模拟器）."""
+    """An adapter path selects model weights; invalid model text uses CardCounter.
 
-    def __init__(
-        self,
-        name: str = "qwen35_9b_zero_shot",
-        mode: ModelMode = "zero_shot",
-        model_version: str = "Qwen/Qwen3.5-9B",
-        adapter_path: Optional[str | Path] = None,
-        seed: int = 42,
-        api_base_url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        temperature: float = 0.2,
-    ) -> None:
+    Authentication, unavailable models, missing checkpoints and transport errors
+    propagate to the caller. They never become a successful simulated game.
+    """
+
+    def __init__(self, name: str = "qwen35_9b_zero_shot", mode: ModelMode = "zero_shot",
+                 model_version: str = "Qwen/Qwen3.5-9B", adapter_path: str | Path | None = None,
+                 seed: int = 42, api_base_url: str | None = None, api_key: str | None = None,
+                 temperature: float = 0.2, *, backend: Any = None,
+                 max_new_tokens: int = 256, top_p: float = 0.9) -> None:
+        if mode not in ("zero_shot", "lora_sft", "lora_rs_improved", "remote_api"):
+            raise ValueError(f"Unknown model mode: {mode}")
+        if api_base_url is not None:
+            raise ValueError("This agent uses the Tinker SDK; api_base_url is not a chat-completions endpoint.")
         super().__init__(name=name, style_tag=mode)
-        self.mode: ModelMode = mode
+        self.mode = mode
         self.model_version = model_version
-        self.adapter_path = Path(adapter_path) if adapter_path else None
+        self.adapter_path = adapter_path
         self.seed = seed
-        self.api_base_url = api_base_url or os.environ.get("TINKER_API_BASE")
-        self.api_key = api_key or os.environ.get("TINKER_API_KEY")
         self.temperature = temperature
-        self.tracker = CostAndFallbackTracker(model_version=f"{model_version}[{mode}]")
-
+        self.top_p = top_p
+        self.max_new_tokens = max_new_tokens
         self.adapter_metadata: dict[str, Any] = {}
-        if self.adapter_path and self.adapter_path.exists():
-            try:
-                self.adapter_metadata = json.loads(
-                    self.adapter_path.read_text(encoding="utf-8")
-                )
-            except Exception:
-                self.adapter_metadata = {}
-
-    def _rng(self, obs: PlayerObservation) -> random.Random:
-        key = f"{self.seed}:{self.mode}:{obs.game_id}:{obs.round_id}:{obs.step_id}:{obs.observer_seat}"
-        seed_int = int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:8], "big")
-        return random.Random(seed_int)
-
-    def _call_remote_api(self, user_prompt: str) -> tuple[str, int, int]:
-        assert self.api_base_url and self.api_key
-        url = self.api_base_url.rstrip("/") + "/chat/completions"
-        payload = {
-            "model": self.model_version,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": self.temperature,
-            "max_tokens": 96,
-        }
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-        content = body["choices"][0]["message"]["content"]
-        usage = body.get("usage", {})
-        p_tokens = int(usage.get("prompt_tokens", len(user_prompt) // 3))
-        c_tokens = int(usage.get("completion_tokens", len(content) // 3))
-        return content, p_tokens, c_tokens
-
-    def _simulate_zero_shot_response(self, obs: PlayerObservation, rng: random.Random) -> str:
-        """零样本基线模型行为特征：
-        1. 未经任务微调，信念概率存在明显未校准偏置（高估单张真牌率或极端化输出 0.20 / 0.85）；
-        2. 缺乏对对手跨局风格与四人博弈风险分层的利用；
-        3. 存在约 2.5% 的非法动作 ID 幻觉，用于检验引擎执行前校验与回退机制。
-        """
-        if rng.random() < 0.025:
-            return '{"belief_bluff_prob": 0.5, "estimated_opponent_style": "unknown", "chosen_action_id": "A99_INVALID", "rationale": "Zero-shot hallucinated action ID."}'
-
-        challenge_actions = [a for a in obs.legal_actions if a.action_type == "CHALLENGE"]
-        truthful, pure_bluff, mixed_bluff = split_play_actions(obs)
-
-        if obs.last_claim is None:
-            raw_belief = 0.0
-        else:
-            claimed_n = obs.last_claim.claimed_count
-            # 零样本未校准信念：对 1 张声称过度信任 (0.18)，对 2~3 张过度怀疑 (0.85)
-            uncalibrated_base = 0.18 if claimed_n == 1 else (0.82 if claimed_n == 2 else 0.94)
-            raw_belief = round(
-                min(0.97, max(0.05, uncalibrated_base + rng.uniform(-0.08, 0.08))), 2
-            )
-
-        if challenge_actions and (
-            len(obs.legal_actions) == 1
-            or (obs.last_claim and obs.last_claim.claimed_count >= 2 and rng.random() < 0.45)
-            or (raw_belief >= 0.78 and rng.random() < 0.55)
-        ):
-            chosen_id = challenge_actions[0].action_id
-            reason = "上家出牌张数可疑，零样本直觉选择质疑。"
-        elif truthful and rng.random() < 0.72:
-            chosen_id = truthful[0].action_id
-            reason = "打出手中真牌。"
-        else:
-            play_actions = [a for a in obs.legal_actions if a.action_type == "PLAY"]
-            chosen_id = (
-                rng.choice(play_actions).action_id
-                if play_actions
-                else obs.legal_actions[0].action_id
-            )
-            reason = "零样本启发式出牌。"
-
-        return json.dumps(
-            {
-                "belief_bluff_prob": raw_belief,
-                "estimated_opponent_style": "unknown",
-                "chosen_action_id": chosen_id,
-                "rationale": reason,
-            },
-            ensure_ascii=False,
-        )
-
-    def _simulate_lora_response(
-        self,
-        obs: PlayerObservation,
-        rng: random.Random,
-        is_rs_improved: bool = False,
-    ) -> str:
-        """经混合对手 + 续玩收益筛选微调后的 Qwen3.5-9B LoRA 模型策略."""
-        if rng.random() < 0.002:
-            return "INVALID_JSON_OUTPUT"
-
-        use_hist = obs.ablation_mode == "full"
-        bluff_prob, est_style, rationale = estimate_bayesian_bluff_belief(
-            obs, use_history_adaptation=use_hist
-        )
-
-        # 若为 last_action_only 消融模式，丢失本小局上家已出牌耗竭信息与自身已打出真牌记忆
-        if obs.ablation_mode == "last_action_only" and obs.last_claim is not None:
-            p_cap = obs.combinatorial_claim_truth_prior or 0.85
-            coarse = 1.0 - p_cap * (0.65 if obs.last_claim.claimed_count == 1 else 0.35)
-            bluff_prob = round(min(0.95, max(0.05, coarse + rng.uniform(-0.10, 0.10))), 4)
-            est_style = "memory_ablated"
-
-        challenge_actions = [a for a in obs.legal_actions if a.action_type == "CHALLENGE"]
-        truthful, pure_bluff, mixed_bluff = split_play_actions(obs)
-
-        own_lethal = obs.own_next_shot_lethal_prob
-        own_truth_cnt = sum(1 for c in obs.own_hand if is_card_truthful(c, obs.target_rank))
-
-        # 风险与手牌分层阈值
-        base_cutoff = 0.69 if is_rs_improved else 0.71
-        risk_delta = 0.14 * (own_lethal - 1.0 / 6.0)
-        hand_delta = -0.14 if own_truth_cnt == 0 else (0.04 if own_truth_cnt >= 2 else 0.0)
-        style_delta = (
-            -0.07
-            if est_style == "aggressive_bluffer"
-            else (0.09 if est_style == "honest_conservative" else 0.0)
-        )
-        empty_claimer_delta = (
-            -0.08
-            if (obs.last_claim is not None and obs.last_claim.claimer_remaining_cards == 0)
-            else 0.0
-        )
-
-        effective_cutoff = min(
-            0.90,
-            max(
-                0.50,
-                base_cutoff + risk_delta + hand_delta + style_delta + empty_claimer_delta,
-            ),
-        )
-
-        if challenge_actions and (
-            len(obs.legal_actions) == 1 or bluff_prob >= effective_cutoff
-        ):
-            return json.dumps(
-                {
-                    "belief_bluff_prob": bluff_prob,
-                    "estimated_opponent_style": est_style,
-                    "chosen_action_id": challenge_actions[0].action_id,
-                    "rationale": f"[{self.mode}] {rationale} 风险/手牌分层阈值={effective_cutoff:.2f}，果断质疑。",
-                },
-                ensure_ascii=False,
-            )
-
-        all_bluffs = sorted(pure_bluff + mixed_bluff, key=lambda a: len(a.cards))
-        if truthful:
-            # 1. 将剩余真牌全部打空后退出本小局行动；若被质疑，由质疑者受罚开一枪。
-            full_hand_truth = [a for a in truthful if len(a.cards) == len(obs.own_hand)]
-            if full_hand_truth:
-                chosen = full_hand_truth[0]
-                return json.dumps(
-                    {
-                        "belief_bluff_prob": bluff_prob if obs.last_claim else 0.0,
-                        "estimated_opponent_style": est_style,
-                        "chosen_action_id": chosen.action_id,
-                        "rationale": f"[{self.mode}] 打空剩余真牌后退出本小局行动；若被质疑，由质疑者受罚开一枪，整场胜负尚未确定。",
-                    },
-                    ensure_ascii=False,
-                )
-
-            # 2. RS 续玩改进策略：若跨局历史识别出紧邻存活下家为诚实保守型（极少质疑单张出牌）且我方仅有1张真牌+多张假牌，
-            # 先打1张假牌保留唯一真牌防身，显著提升残局存活率！
-            if is_rs_improved and use_hist and all_bluffs and own_truth_cnt == 1 and own_lethal <= 0.25:
-                next_alive = None
-                for offset in range(1, 4):
-                    cand_s = (obs.observer_seat + offset) % 4
-                    st = obs.players_public_status[cand_s]
-                    if st.alive and st.hand_count > 0:
-                        next_alive = cand_s
-                        break
-                if next_alive is not None:
-                    next_challenges = sum(
-                        1 for r in obs.past_rounds_history if r.challenger_seat == next_alive
-                    )
-                    if len(obs.past_rounds_history) >= 1 and next_challenges == 0:
-                        chosen = all_bluffs[0]
-                        return json.dumps(
-                            {
-                                "belief_bluff_prob": bluff_prob if obs.last_claim else 0.0,
-                                "estimated_opponent_style": est_style,
-                                "chosen_action_id": chosen.action_id,
-                                "rationale": f"[{self.mode}] 识别下家(Seat{next_alive})质疑倾向极低，先行单张假牌过渡并保留唯一真牌控场。",
-                            },
-                            ensure_ascii=False,
-                        )
-
-            # 3. 常规稳健出单张真牌，最大化真牌可持续轮数
-            chosen = truthful[0]
-            return json.dumps(
-                {
-                    "belief_bluff_prob": bluff_prob if obs.last_claim else 0.0,
-                    "estimated_opponent_style": est_style,
-                    "chosen_action_id": chosen.action_id,
-                    "rationale": f"[{self.mode}] 稳健打出单张真牌，保持零风险控场。",
-                },
-                ensure_ascii=False,
-            )
-
-        chosen = all_bluffs[0] if all_bluffs else obs.legal_actions[0]
-        return json.dumps(
-            {
-                "belief_bluff_prob": bluff_prob if obs.last_claim else 0.0,
-                "estimated_opponent_style": est_style,
-                "chosen_action_id": chosen.action_id,
-                "rationale": f"[{self.mode}] 手中无真牌，选择单张假牌最小化暴露风险。",
-            },
-            ensure_ascii=False,
-        )
-
-    def select_action(
-        self, obs: PlayerObservation
-    ) -> Tuple[CandidateAction, AgentDecisionRecord]:
-        t0 = time.perf_counter()
-        user_prompt = build_user_prompt(obs)
-        rng = self._rng(obs)
-
-        if self.mode == "remote_api" and self.api_base_url and self.api_key:
-            raw_output, p_tokens, c_tokens = self._call_remote_api(user_prompt)
-        else:
-            p_tokens = max(60, len(SYSTEM_PROMPT + user_prompt) // 3)
-            if self.mode == "zero_shot":
-                raw_output = self._simulate_zero_shot_response(obs, rng)
-            elif self.mode == "lora_sft":
-                raw_output = self._simulate_lora_response(obs, rng, is_rs_improved=False)
+        self.checkpoint: str | None = None
+        if adapter_path is not None:
+            path_text = str(adapter_path)
+            if path_text.startswith("tinker://"):
+                raise ValueError("A trained adapter requires contract-bearing metadata, not a bare checkpoint URI.")
             else:
-                raw_output = self._simulate_lora_response(obs, rng, is_rs_improved=True)
-            c_tokens = max(24, len(raw_output) // 3)
+                path = Path(adapter_path)
+                if path.is_dir():
+                    path = path / "adapter_metadata.json"
+                self.adapter_metadata = json.loads(path.read_text(encoding="utf-8"))
+                require_contract(self.adapter_metadata, "adapter metadata")
+                if self.adapter_metadata.get("base_model") != model_version:
+                    raise ValueError("Adapter metadata base_model does not match the configured model.")
+                self.checkpoint = self.adapter_metadata.get("sampler_path")
+            if not isinstance(self.checkpoint, str) or not self.checkpoint.startswith("tinker://") or "/sampler_weights/" not in self.checkpoint:
+                raise ValueError("Adapter must contain a real Tinker sampler_path.")
+        if mode in ("lora_sft", "lora_rs_improved") and not self.checkpoint:
+            raise ValueError(f"{mode} requires a trained adapter checkpoint.")
+        if mode == "zero_shot" and self.checkpoint:
+            raise ValueError("zero_shot cannot load a trained checkpoint.")
+        if backend is None:
+            from liars_agent.training.tinker_backend import TinkerBackend
+            backend = TinkerBackend(base_model=model_version, api_key=api_key)
+        if backend.base_model != model_version:
+            raise ValueError("Agent and backend models differ.")
+        self.backend = backend
+        self.tracker = CostAndFallbackTracker(model_version=f"{model_version}[{mode}]",
+            price_per_1m_prompt_tokens=backend.rates["prefill"],
+            price_per_1m_completion_tokens=backend.rates["sample"])
+        self._fallback = CardCounterBot(name="card_counter_fallback", seed=seed)
 
-        latency_ms = (time.perf_counter() - t0) * 1000.0
-        self.tracker.total_calls += 1
-        self.tracker.total_prompt_tokens += p_tokens
-        self.tracker.total_completion_tokens += c_tokens
-        self.tracker.total_latency_ms += latency_ms
+    def _sampling_seed(self, obs: PlayerObservation) -> int:
+        # Mode is intentionally absent: paired ablations retain the same RNG seed.
+        value = f"{self.seed}:{obs.round_id}:{obs.step_id}:{obs.observer_seat}"
+        return int.from_bytes(hashlib.sha256(value.encode()).digest()[:4], "big") & 0x7FFFFFFF
 
-        parsed = parse_llm_decision_json(raw_output)
-        legal_map = {a.action_id: a for a in obs.legal_actions}
+    def _score_belief(self, obs: PlayerObservation):
+        if obs.last_claim is None:
+            return None
+        score = self.backend.score_bluff(
+            [{"role": "system", "content": BELIEF_SYSTEM_PROMPT},
+             {"role": "user", "content": build_bluff_user_prompt(obs)}], checkpoint=self.checkpoint)
+        self.tracker.belief_calls += 1
+        self.tracker.api_calls += 2
+        self.tracker.total_prompt_tokens += score.prompt_tokens
+        self.tracker.belief_generated_tokens_upper_bound += score.belief_completion_tokens_upper_bound
+        self.tracker.total_latency_ms += score.latency_ms
+        return score
 
-        if parsed is not None:
-            action_id = str(parsed.get("chosen_action_id", ""))
-            if action_id in legal_map:
-                chosen = legal_map[action_id]
-                raw_belief = parsed.get("belief_bluff_prob")
-                belief_val = (
-                    float(raw_belief)
-                    if isinstance(raw_belief, (int, float)) and obs.last_claim is not None
-                    else None
-                )
-                if belief_val is not None:
-                    belief_val = round(min(1.0, max(0.0, belief_val)), 4)
-                return chosen, AgentDecisionRecord(
-                    belief_bluff_prob=belief_val,
-                    estimated_opponent_style=str(
-                        parsed.get("estimated_opponent_style", "unknown")
-                    ),
-                    rationale=str(parsed.get("rationale", "")),
-                    raw_output=raw_output,
-                    was_fallback=False,
-                    fallback_reason="",
-                    latency_ms=round(latency_ms, 2),
-                    prompt_tokens=p_tokens,
-                    completion_tokens=c_tokens,
-                )
-            fallback_reason = (
-                f"chosen_action_id {action_id!r} not in legal_actions {list(legal_map)}"
-            )
-        else:
-            fallback_reason = "JSON parse failure"
+    def predict_bluff_prob(self, obs: PlayerObservation) -> float | None:
+        """Score binary label tokens only, without generating or executing an action."""
+        score = self._score_belief(obs)
+        return None if score is None else score.probability
 
+    def _decode(self, obs: PlayerObservation, result: Any, belief: Any = None,
+                include_belief_usage: bool = True) -> tuple[CandidateAction, AgentDecisionRecord]:
+        reason = ""
+        parsed = None
+        try:
+            if result.stop_reason != "stop":
+                raise ValueError("Model output reached its token limit.")
+            parsed = validate_action_decision(obs, result.text)
+        except ValueError as exc:
+            reason = str(exc)
+        source = "model" if belief is not None else ("not_applicable" if obs.last_claim is None else "not_requested")
+        common = dict(belief_bluff_prob=None if belief is None else belief.probability,
+            belief_source=source, opponent_profile=public_opponent_profile(obs),
+            rationale_source="deterministic_action_summary", raw_output=result.text,
+            latency_ms=result.latency_ms + (belief.latency_ms if belief is not None and include_belief_usage else 0),
+            prompt_tokens=result.prompt_tokens + (belief.prompt_tokens if belief is not None and include_belief_usage else 0),
+            completion_tokens=result.completion_tokens,
+            belief_completion_tokens_upper_bound=(belief.belief_completion_tokens_upper_bound
+                if belief is not None and include_belief_usage else 0))
+        if not reason:
+            action = next(a for a in obs.legal_actions if a.action_id == parsed["chosen_action_id"])
+            return action, AgentDecisionRecord(rationale=describe_action(obs, action), **common)
         self.tracker.fallback_count += 1
-        self.tracker.fallback_events.append(
-            {
-                "game_id": obs.game_id,
-                "round_id": obs.round_id,
-                "step_id": obs.step_id,
-                "seat": obs.observer_seat,
-                "raw_output": raw_output,
-                "reason": fallback_reason,
-            }
-        )
-        fallback_action = obs.legal_actions[0]
-        fallback_belief, _, _ = estimate_bayesian_bluff_belief(
-            obs, use_history_adaptation=False
-        )
-        return fallback_action, AgentDecisionRecord(
-            belief_bluff_prob=fallback_belief if obs.last_claim else None,
-            estimated_opponent_style="fallback_safe",
-            rationale=f"[FALLBACK: {fallback_reason}] 自动回退至合法动作 {fallback_action.action_id}。",
-            raw_output=raw_output,
-            was_fallback=True,
-            fallback_reason=fallback_reason,
-            latency_ms=round(latency_ms, 2),
-            prompt_tokens=p_tokens,
-            completion_tokens=c_tokens,
-        )
+        self.tracker.fallback_events.append({"round_id": obs.round_id, "step_id": obs.step_id,
+            "seat": obs.observer_seat, "raw_output": result.text, "reason": reason})
+        action, fallback = self._fallback.select_action(obs)
+        return action, AgentDecisionRecord(was_fallback=True, fallback_reason=reason,
+            fallback_record=fallback.to_dict(), rationale=describe_action(obs, action), **common)
+
+    def sample_candidates(self, obs: PlayerObservation, num_samples: int = 8, *,
+                          include_belief: bool = True) -> list[tuple[CandidateAction, AgentDecisionRecord]]:
+        if not obs.legal_actions:
+            raise ValueError("Cannot select an action without legal candidates.")
+        if num_samples < 1:
+            raise ValueError("num_samples must be positive.")
+        # One independent belief score is shared by this observation's candidates.
+        belief = self._score_belief(obs) if include_belief else None
+        results = self.backend.sample(
+            [{"role": "system", "content": SYSTEM_PROMPT},
+             {"role": "user", "content": build_user_prompt(obs)}],
+            checkpoint=self.checkpoint, num_samples=num_samples, temperature=self.temperature,
+            top_p=self.top_p, max_tokens=self.max_new_tokens, seed=self._sampling_seed(obs))
+        self.tracker.api_calls += 1
+        self.tracker.total_calls += len(results)
+        self.tracker.total_prompt_tokens += sum(result.prompt_tokens for result in results)
+        self.tracker.total_completion_tokens += sum(result.completion_tokens for result in results)
+        self.tracker.total_latency_ms += sum(result.latency_ms for result in results)
+        return [self._decode(obs, result, belief, index == 0)
+                for index, result in enumerate(results)]
+
+    def select_action(self, obs: PlayerObservation) -> tuple[CandidateAction, AgentDecisionRecord]:
+        return self.sample_candidates(obs, num_samples=1)[0]

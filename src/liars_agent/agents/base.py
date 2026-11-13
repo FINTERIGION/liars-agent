@@ -1,4 +1,4 @@
-"""智能体统一抽象基类与贝叶斯对手信念估计工具."""
+"""智能体抽象接口、公开画像与规则启发式."""
 
 from __future__ import annotations
 
@@ -14,85 +14,74 @@ from liars_agent.engine.types import (
 )
 
 
-def estimate_bayesian_bluff_belief(
-    obs: PlayerObservation,
-    use_history_adaptation: bool = True,
+def public_opponent_profile(obs: PlayerObservation) -> dict:
+    """Observed frequencies with denominators, never hidden strategy identities."""
+    profile = {}
+    events = (*obs.past_public_actions, *obs.current_round_history)
+    for player in obs.players_public_status:
+        seat = player.seat
+        own_events = [e for e in events if e.actor_seat == seat]
+        plays = [e for e in own_events if e.action_type == "PLAY"]
+        opportunities = sum(e.step_id > 1 and not e.forced_challenge for e in own_events)
+        challenges = sum(e.action_type == "CHALLENGE" and not e.forced_challenge for e in own_events)
+        reveals = [r for r in obs.past_rounds_history if r.claimer_seat == seat]
+        bluffs = sum(r.was_bluff for r in reveals)
+        profile[str(seat)] = {
+            "plays": len(plays), "cards_played": sum(e.claimed_count for e in plays),
+            "mean_play_count": sum(e.claimed_count for e in plays) / len(plays) if plays else None,
+            "voluntary_challenges": challenges, "challenge_opportunities": opportunities,
+            "voluntary_challenge_rate": challenges / opportunities if opportunities else None,
+            "reveals": len(reveals), "revealed_bluffs": bluffs,
+            "revealed_bluff_rate": bluffs / len(reveals) if reveals else None,
+        }
+    return profile
+
+
+def describe_action(obs: PlayerObservation, action: CandidateAction) -> str:
+    """A factual action description, not a claim about a model's reasoning."""
+    if action.action_type == "CHALLENGE":
+        if len(obs.legal_actions) == 1:
+            return "仅当前行动玩家还有牌，按规则必须质疑上一手。"
+        return f"选择质疑 Seat {obs.last_claim.claimer_seat} 的上一手出牌。"
+    truthful = are_cards_truthful(action.cards, obs.target_rank)
+    return f"选择打出 {len(action.cards)} 张{'全真牌' if truthful else '含假牌的牌'}，剩余 {len(obs.own_hand) - len(action.cards)} 张。"
+
+
+def estimate_heuristic_bluff_belief(
+    obs: PlayerObservation, use_history_adaptation: bool = True,
 ) -> Tuple[float, str, str]:
-    """根据当前可见信息（自身已知牌 + 公开历史）估计上家出牌为诈唬的后验概率.
+    """Rule baseline score under hand-written assumptions; not a Bayesian posterior.
 
-    严格区分“观测事实”与“对手模型假设”：
-    1. 组合数学能力先验 $P(\text{Capable})$：上家在出牌前手牌容量 $H$ 下，至少持有 $c$ 张真牌的超几何概率；
-    2. 本小局真牌耗竭效应（Round Depletion）：随着本小局出牌轮次推进及上家此前已出牌张数增加，其手中剩余真牌被耗尽、被迫诈唬的概率上升；
-    3. 跨小局对手画像更新（Opponent Adaptation）：根据 `past_rounds_history` 中该座位被翻牌时的真实诈唬率动态修正后验概率。
-
-    返回：(belief_bluff_prob, estimated_opponent_style, rationale)
+    The capacity prior concerns holding enough truthful cards. Revealed bluff
+    frequencies describe selected challenged plays, not the player's full policy.
+    No labels from this estimator are used to supervise model belief predictions.
     """
     if obs.last_claim is None:
-        return 0.0, "none", "当前为小局首出牌，无上家声称需要估计。"
-
+        return 0.0, "unknown", "当前无待回应声称，诈唬概率不适用。"
     claim = obs.last_claim
-    p_capable = obs.combinatorial_claim_truth_prior
-    assert p_capable is not None
+    capacity = obs.hand_capacity_prior
+    assert capacity is not None
+    previous_cards = sum(e.claimed_count for e in obs.current_round_history
+        if e.action_type == "PLAY" and e.actor_seat == claim.claimer_seat and e.step_id < claim.step_id)
+    voluntary = {1: .36, 2: .72, 3: .86}[claim.claimed_count]
+    voluntary += min(.22, .09 * previous_cards) + (.08 if claim.claimer_remaining_cards == 0 else 0)
+    reveals = [r for r in obs.past_rounds_history if r.claimer_seat == claim.claimer_seat] if use_history_adaptation else []
+    bluffs = sum(r.was_bluff for r in reveals)
+    if reveals:
+        selected_rate = (bluffs + 1) / (len(reveals) + 2)
+        if selected_rate >= .58:
+            voluntary += .14 * min(1, len(reveals) / 2)
+        elif selected_rate <= .38:
+            voluntary -= .16 * min(1, len(reveals) / 2)
+    voluntary = min(.95, max(.05, voluntary))
+    probability = 1 - capacity * (1 - voluntary)
+    rationale = (f"均匀参考模型下手牌容量概率={capacity:.3f}；"
+                 f"被揭示诈唬次数={bluffs}/{len(reveals)}；人工启发式估计={probability:.3f}。")
+    return probability, "unknown", rationale
 
-    if p_capable <= 0.0:
-        return (
-            1.0,
-            "certain_bluffer",
-            f"数学必然诈唬：我方已知真牌后，牌库剩余真牌不足 {claim.claimed_count} 张。",
-        )
 
-    claimer_seat = claim.claimer_seat
-    reveals = 0
-    bluffs = 0
-    claimer_prior_cards_this_round = 0
-    est_style = "balanced"
-
-    # 统计本小局内上家在此前步骤已消耗的手牌数（若处于 last_action_only 消融则无此信息）
-    for ev in obs.current_round_history[:-1]:
-        if ev.actor_seat == claimer_seat and ev.action_type == "PLAY":
-            claimer_prior_cards_this_round += ev.claimed_count
-
-    if use_history_adaptation:
-        for res in obs.past_rounds_history:
-            if res.claimer_seat == claimer_seat:
-                reveals += 1
-                if res.was_bluff:
-                    bluffs += 1
-
-    # 基础诈唬率：结合声称张数（1张 ~38%，2张 ~72%，3张 ~88%）与本小局真牌耗竭修正
-    if claim.claimed_count == 1:
-        base_voluntary_bluff = 0.36
-    elif claim.claimed_count == 2:
-        base_voluntary_bluff = 0.72
-    else:
-        base_voluntary_bluff = 0.86
-
-    # 若上家在本小局前面已经出过牌，其手中真牌耗竭概率显著上升
-    depletion_bonus = min(0.22, 0.09 * claimer_prior_cards_this_round)
-    empty_bonus = 0.08 if claim.claimer_remaining_cards == 0 else 0.0
-    voluntary_bluff = base_voluntary_bluff + depletion_bonus + empty_bonus
-
-    if use_history_adaptation and reveals >= 1:
-        emp_bluff_rate = (bluffs + 1.0) / (reveals + 2.0)
-        if emp_bluff_rate >= 0.58:
-            est_style = "aggressive_bluffer"
-            voluntary_bluff += 0.14 * min(1.0, reveals / 2.0)
-        elif emp_bluff_rate <= 0.38:
-            est_style = "honest_conservative"
-            voluntary_bluff -= 0.16 * min(1.0, reveals / 2.0)
-        else:
-            est_style = "card_counter"
-
-    voluntary_bluff = min(0.95, max(0.05, voluntary_bluff))
-    prob_truth = p_capable * (1.0 - voluntary_bluff)
-    post_bluff_prob = round(min(0.98, max(0.02, 1.0 - prob_truth)), 4)
-
-    rationale = (
-        f"上家(Seat{claimer_seat})持有>={claim.claimed_count}张真牌先验={p_capable:.2f}，"
-        f"本局已消耗={claimer_prior_cards_this_round}张，跨局亮牌诈唬={bluffs}/{reveals}({est_style}) "
-        f"-> 后验诈唬概率={post_bluff_prob:.2f}。"
-    )
-    return post_bluff_prob, est_style, rationale
+# Legacy Python import only; new prompts, samples and reports use the honest name.
+estimate_bayesian_bluff_belief = estimate_heuristic_bluff_belief
 
 
 def split_play_actions(

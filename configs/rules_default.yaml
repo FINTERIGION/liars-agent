@@ -32,3 +32,5 @@ round_end: "每次质疑结算一次开枪后结束小局，无论是否死亡"
 next_starter: "受罚者若存活则先手，否则由其下一名存活玩家先手"
 winner: "最后一名存活玩家"
 replay_visibility: "整场结束后才开放全量真值"
+
+observation_history: "整场全部公开行动与结算；三种历史消融均保留本小局自己的已知牌"

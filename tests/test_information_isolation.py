@@ -3,16 +3,59 @@
 from __future__ import annotations
 
 import json
+import copy
 import unittest
 
 from liars_agent.agents.prompt_builder import build_user_prompt
-from liars_agent.engine.observation import apply_history_ablation
+from liars_agent.engine.observation import PlayerObservation, apply_history_ablation
 from liars_agent.engine.state import LiarsBarEngine
 from liars_agent.ui.app import InteractiveSessionManager, create_ui
 
 
 class TestInformationIsolation(unittest.TestCase):
     """验证任何座位的 `PlayerObservation` 与模型 Prompt 绝不泄露其他玩家底牌、未翻开暗牌或实弹位置."""
+
+    def test_environment_ids_seeds_and_hidden_state_are_not_observations(self) -> None:
+        first = LiarsBarEngine(game_id="train_905_game_00000", game_seed=19)
+        second = copy.deepcopy(first)
+        second.game_id = "a-different-log-id"
+        second.game_seed = 123456
+        actor = first.current_turn_seat
+        others = [seat for seat in range(4) if seat != actor]
+        second.hands[others[0]], second.hands[others[1]] = second.hands[others[1]], second.hands[others[0]]
+        second.fatal_chamber_slot = [7 - slot for slot in first.fatal_chamber_slot]
+        self.assertEqual(first.get_observation(), second.get_observation())
+        self.assertFalse(hasattr(first.get_observation(), "game_id"))
+        serialized = first.get_observation().to_dict()
+        for key in ("game_id", "game_seed", "fatal_chamber_slot"):
+            self.assertNotIn(key, serialized)
+        self.assertEqual(PlayerObservation.from_dict(serialized), first.get_observation())
+        self.assertIn("hand_capacity_prior", serialized)
+        self.assertNotIn("combinatorial_claim_truth_prior", serialized)
+        invalid = {**serialized, "observation_version": "old"}
+        with self.assertRaisesRegex(ValueError, "version"):
+            PlayerObservation.from_dict(invalid)
+
+    def test_public_history_ablation_never_removes_own_known_cards(self) -> None:
+        engine = LiarsBarEngine(game_seed=22)
+        engine.step(engine.get_legal_actions()[0])
+        engine.step("CHALLENGE")
+        for _ in range(5):
+            engine.step(next(a for a in engine.get_legal_actions() if a.action_type == "PLAY"))
+        observation = engine.get_observation()
+        self.assertGreater(len(observation.own_played_cards_this_round), 0)
+        self.assertGreater(len(observation.past_public_actions), 0)
+        for mode in ("current_round_only", "last_action_only"):
+            with self.subTest(mode=mode):
+                ablated = apply_history_ablation(observation, mode)
+                self.assertEqual(ablated.own_hand, observation.own_hand)
+                self.assertEqual(ablated.own_played_cards_this_round, observation.own_played_cards_this_round)
+                self.assertEqual(ablated.own_known_cards_this_round, observation.own_known_cards_this_round)
+                self.assertEqual(ablated.hand_capacity_prior, observation.hand_capacity_prior)
+                self.assertEqual(ablated.legal_actions, observation.legal_actions)
+                self.assertEqual(ablated.past_public_actions, ())
+                self.assertEqual(ablated.past_rounds_history, ())
+        self.assertEqual(len(apply_history_ablation(observation, "last_action_only").current_round_history), 1)
 
     def test_full_prompt_retains_more_than_six_rounds(self) -> None:
         engine = LiarsBarEngine(game_seed=10)
@@ -128,7 +171,7 @@ class TestInformationIsolation(unittest.TestCase):
         obs_last_only = apply_history_ablation(obs_full, "last_action_only")
         self.assertEqual(len(obs_last_only.past_rounds_history), 0)
         self.assertLessEqual(len(obs_last_only.current_round_history), 1)
-        self.assertEqual(len(obs_last_only.own_played_cards_this_round), 0)
+        self.assertEqual(obs_last_only.own_played_cards_this_round, obs_full.own_played_cards_this_round)
 
 
 if __name__ == "__main__":

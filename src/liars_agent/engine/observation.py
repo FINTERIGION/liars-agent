@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
+from liars_agent.contracts import RULES_VERSION, OBSERVATION_VERSION
 from liars_agent.engine.types import (
     AblationMode,
     CandidateAction,
@@ -18,7 +19,7 @@ from liars_agent.engine.types import (
 )
 
 
-def compute_combinatorial_truth_prior(
+def compute_hand_capacity_prior(
     known_own_cards: tuple[str, ...],
     target_rank: str,
     claimed_count: int,
@@ -26,9 +27,10 @@ def compute_combinatorial_truth_prior(
     total_deck_size: int = 20,
     total_truth_cards: int = 8,
 ) -> float:
-    """仅基于观测者自身已知牌（当前手牌+本小局已打出牌），计算上家在出牌前手牌中至少持有 `claimed_count` 张真牌的超几何先验概率.
+    """均匀剩余牌槽位模型中，上家手牌至少能凑齐 c 张真牌的概率。
 
-    注意：此函数仅使用观测者自身合法可见的信息与上家公开手牌数，绝不读取牌桌上其他玩家的底牌。
+    这是手牌容量参考量，不是当前出牌为真或诈唬的概率；它不包含
+    对手如何选择牌或张数的策略似然，只使用本小局自己的已知牌。
     """
     if claimed_count <= 0:
         return 1.0
@@ -36,7 +38,7 @@ def compute_combinatorial_truth_prior(
     remaining_truth = max(0, total_truth_cards - own_truth)
     remaining_unknown = max(0, total_deck_size - len(known_own_cards))
 
-    hand_size = max(claimed_count, min(remaining_unknown, claimer_hand_size_before_play))
+    hand_size = min(remaining_unknown, claimer_hand_size_before_play)
     if claimed_count > remaining_truth or claimed_count > hand_size:
         return 0.0
 
@@ -58,7 +60,6 @@ def compute_combinatorial_truth_prior(
 class PlayerObservation:
     """单个决策步下向智能体暴露的局部可见状态（严格不含他人手牌、未翻开牌或实弹位置）."""
 
-    game_id: str
     round_id: int
     step_id: int
     observer_seat: int
@@ -70,6 +71,7 @@ class PlayerObservation:
     current_round_history: tuple[PublicEvent, ...]
     past_rounds_history: tuple[RoundResolution, ...]
     legal_actions: tuple[CandidateAction, ...]
+    past_public_actions: tuple[PublicEvent, ...] = ()
     ablation_mode: AblationMode = "full"
 
     @property
@@ -92,21 +94,27 @@ class PlayerObservation:
         return 1.0 / 6.0
 
     @property
-    def combinatorial_claim_truth_prior(self) -> Optional[float]:
-        """若当前面临上家出牌，返回仅基于自身已知牌与上家手牌容量的超几何可真先验概率."""
+    def hand_capacity_prior(self) -> Optional[float]:
+        """待回应声称对应的均匀牌槽位容量概率；没有声称时为 None。"""
         if self.last_claim is None:
             return None
         claimer_hand_before = self.last_claim.claimer_remaining_cards + self.last_claim.claimed_count
-        return compute_combinatorial_truth_prior(
+        return compute_hand_capacity_prior(
             known_own_cards=self.own_known_cards_this_round,
             target_rank=self.target_rank,
             claimed_count=self.last_claim.claimed_count,
             claimer_hand_size_before_play=claimer_hand_before,
         )
 
+    @property
+    def combinatorial_claim_truth_prior(self) -> Optional[float]:
+        """Deprecated Python alias; use hand_capacity_prior for its precise meaning."""
+        return self.hand_capacity_prior
+
     def to_dict(self) -> dict[str, Any]:
         return {
-            "game_id": self.game_id,
+            "rules_version": RULES_VERSION,
+            "observation_version": OBSERVATION_VERSION,
             "round_id": self.round_id,
             "step_id": self.step_id,
             "observer_seat": self.observer_seat,
@@ -117,54 +125,59 @@ class PlayerObservation:
             "last_claim": self.last_claim.to_dict() if self.last_claim else None,
             "current_round_history": [e.to_dict() for e in self.current_round_history],
             "past_rounds_history": [r.to_dict() for r in self.past_rounds_history],
+            "past_public_actions": [event.to_dict() for event in self.past_public_actions],
             "legal_actions": [a.to_dict() for a in self.legal_actions],
             "ablation_mode": self.ablation_mode,
-            "combinatorial_claim_truth_prior": (
-                round(self.combinatorial_claim_truth_prior, 4)
-                if self.combinatorial_claim_truth_prior is not None
+            "hand_capacity_prior": (
+                round(self.hand_capacity_prior, 4)
+                if self.hand_capacity_prior is not None
                 else None
             ),
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PlayerObservation:
+        """Restore the public observation stored in samples and replay steps."""
+        if data.get("rules_version") != RULES_VERSION or data.get("observation_version") != OBSERVATION_VERSION:
+            raise ValueError("Observation version does not match the current rules/information contract.")
+        return cls(
+            round_id=int(data["round_id"]),
+            step_id=int(data["step_id"]), observer_seat=int(data["observer_seat"]),
+            target_rank=data["target_rank"], own_hand=sort_cards(data["own_hand"]),
+            own_played_cards_this_round=sort_cards(data.get("own_played_cards_this_round", ())),
+            players_public_status=tuple(PlayerPublicInfo(**{
+                key: value for key, value in row.items() if key != "next_shot_lethal_prob"
+            }) for row in data["players_public_status"]),
+            last_claim=ClaimEvent(**data["last_claim"]) if data.get("last_claim") else None,
+            current_round_history=tuple(PublicEvent(**row) for row in data.get("current_round_history", ())),
+            past_rounds_history=tuple(RoundResolution(**{
+                **row, "revealed_cards": tuple(row["revealed_cards"])
+            }) for row in data.get("past_rounds_history", ())),
+            legal_actions=tuple(CandidateAction.from_dict(row) for row in data["legal_actions"]),
+            past_public_actions=tuple(PublicEvent(**row) for row in data["past_public_actions"]),
+            ablation_mode=data.get("ablation_mode", "full"),
+        )
 
 
 def apply_history_ablation(
     obs: PlayerObservation,
     mode: AblationMode,
 ) -> PlayerObservation:
-    """对玩家观测执行历史信息消融（用于第5~6周的历史信息利用对照实验）."""
+    """只删除公开历史维度，始终保留本小局自己已知的牌。"""
     if mode == "full":
+        if obs.ablation_mode != "full":
+            raise ValueError("Cannot restore full history from an already ablated observation.")
         return obs
     if mode == "current_round_only":
-        return PlayerObservation(
-            game_id=obs.game_id,
-            round_id=obs.round_id,
-            step_id=obs.step_id,
-            observer_seat=obs.observer_seat,
-            target_rank=obs.target_rank,
-            own_hand=obs.own_hand,
-            own_played_cards_this_round=obs.own_played_cards_this_round,
-            players_public_status=obs.players_public_status,
-            last_claim=obs.last_claim,
-            current_round_history=obs.current_round_history,
-            past_rounds_history=(),
-            legal_actions=obs.legal_actions,
-            ablation_mode="current_round_only",
-        )
+        return replace(obs, past_rounds_history=(), past_public_actions=(),
+                       ablation_mode="current_round_only")
     if mode == "last_action_only":
-        last_events = obs.current_round_history[-1:] if obs.current_round_history else ()
-        return PlayerObservation(
-            game_id=obs.game_id,
-            round_id=obs.round_id,
-            step_id=obs.step_id,
-            observer_seat=obs.observer_seat,
-            target_rank=obs.target_rank,
-            own_hand=obs.own_hand,
-            own_played_cards_this_round=(),
-            players_public_status=obs.players_public_status,
-            last_claim=obs.last_claim,
-            current_round_history=last_events,
-            past_rounds_history=(),
-            legal_actions=obs.legal_actions,
-            ablation_mode="last_action_only",
-        )
+        return replace(obs, current_round_history=obs.current_round_history[-1:],
+                       past_rounds_history=(), past_public_actions=(),
+                       ablation_mode="last_action_only")
     raise ValueError(f"Unsupported ablation mode: {mode}")
+
+
+# Deprecated Python name retained for existing analysis notebooks. Serialized
+# observations use only hand_capacity_prior.
+compute_combinatorial_truth_prior = compute_hand_capacity_prior

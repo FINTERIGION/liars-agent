@@ -28,6 +28,25 @@ class TestEngineRulesAndBoundaries(unittest.TestCase):
         self.assertEqual(all_dealt.count("A"), 6)
         self.assertEqual(all_dealt.count("JOKER"), 2)
 
+    def test_nonstandard_rule_parameters_are_rejected(self) -> None:
+        for kwargs in ({"num_players": 3}, {"hand_size": 6},
+                       {"max_play_cards": 4}, {"max_chambers": 5}):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(ValueError, "Fixed research rules"):
+                LiarsBarEngine(**kwargs)
+
+    def test_finished_round_archives_all_public_actions(self) -> None:
+        engine = LiarsBarEngine(game_seed=10)
+        for _ in range(4):
+            engine.step(next(a for a in engine.get_legal_actions() if a.action_type == "PLAY"))
+        plays = tuple(engine.current_round_history)
+        engine.step("CHALLENGE")
+        self.assertEqual(engine.round_id, 2)
+        self.assertEqual(tuple(engine.past_public_actions[:-1]), plays)
+        self.assertEqual(engine.past_public_actions[-1].action_type, "CHALLENGE")
+        self.assertEqual(engine.current_round_history, [])
+        self.assertTrue(all(not cards for cards in engine.played_cards_this_round))
+        self.assertEqual(engine.get_observation().past_public_actions, tuple(engine.past_public_actions))
+
     def test_joker_counts_as_truthful_for_all_targets(self) -> None:
         for target in ("Q", "K", "A"):
             self.assertTrue(is_card_truthful("JOKER", target))
@@ -81,7 +100,6 @@ class TestEngineRulesAndBoundaries(unittest.TestCase):
         with self.assertRaises(ValueError):
             engine.step("A999_NONEXISTENT")
 
-
     def test_last_holder_must_challenge_with_three_or_four_players_alive(self) -> None:
         for alive_count in (3, 4):
             for last_card in ("Q", "K"):
@@ -116,7 +134,6 @@ class TestEngineRulesAndBoundaries(unittest.TestCase):
         self.assertEqual(engine.current_turn_seat, 1)
         self.assertTrue(any(a.action_type == "PLAY" for a in engine.get_legal_actions()))
         self.assertTrue(any(a.action_type == "CHALLENGE" for a in engine.get_legal_actions()))
-
 
     def test_empty_player_has_no_challenge_or_play_actions(self) -> None:
         engine = LiarsBarEngine(game_seed=10)
@@ -159,6 +176,16 @@ class TestEngineRulesAndBoundaries(unittest.TestCase):
         self.assertEqual(engine.shots_taken[0], 0)
         self.assertEqual(engine.round_id, 2)
         self.assertEqual(len(engine.hands[0]), 5)
+
+    def test_disabled_truth_logging_preserves_game_behavior(self) -> None:
+        recorded = LiarsBarEngine(game_seed=17)
+        simulation = LiarsBarEngine(game_seed=17, record_truth=False)
+        while not recorded.is_game_over():
+            action = recorded.get_legal_actions()[0]
+            self.assertEqual(recorded.step(action), simulation.step(action))
+            self.assertEqual(recorded.get_observation(), simulation.get_observation())
+        self.assertGreater(len(recorded.step_truth_logs), 0)
+        self.assertEqual(simulation.step_truth_logs, [])
 
 
 if __name__ == "__main__":

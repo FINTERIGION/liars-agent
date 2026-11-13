@@ -1,119 +1,243 @@
-"""Qwen3.5-9B Tinker LoRA 监督微调与多次续玩策略改进驱动脚本."""
-
+"""Balanced action imitation and binary belief learning on one Tinker LoRA."""
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+import random
 import time
 from pathlib import Path
-from typing import Any, Optional
+from types import SimpleNamespace
+from typing import Any
 
+from liars_agent.agents.prompt_builder import (SYSTEM_PROMPT, BELIEF_SYSTEM_PROMPT,
+    build_user_prompt, build_bluff_user_prompt, validate_action_decision)
+from liars_agent.contracts import current_contract, require_contract
+from liars_agent.engine.observation import PlayerObservation
 from liars_agent.training.dataset_splitter import split_dataset_by_game_id
+from liars_agent.training.tinker_backend import TinkerBackend, resolve_future
+
+
+def _write_json(path: Path, value: Any) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
+    temporary.replace(path)
+
+
+def validate_training_sample(sample: dict[str, Any]) -> PlayerObservation:
+    """Reject stale contracts or malformed supervision before any model API call."""
+    if sample.get("historical_example"):
+        raise ValueError("Historical examples cannot be used for training; regenerate data with current rules.")
+    require_contract(sample, "training sample")
+    obs = PlayerObservation.from_dict(sample["observation"])
+    task = sample.get("task")
+    if task == "action":
+        validate_action_decision(obs, sample["completion"])
+        expected_system, expected_prompt = SYSTEM_PROMPT, build_user_prompt(obs)
+    elif task == "belief":
+        if obs.last_claim is None or sample.get("completion") not in ("0", "1"):
+            raise ValueError("Belief supervision requires a pending claim and the exact label 0 or 1.")
+        if type(sample.get("label")) is not int or sample["label"] != int(sample["completion"]):
+            raise ValueError("Belief label must be an integer matching its completion.")
+        expected_system, expected_prompt = BELIEF_SYSTEM_PROMPT, build_bluff_user_prompt(obs)
+    else:
+        raise ValueError("Training sample task must be action or belief.")
+    if sample.get("system") != expected_system or sample.get("prompt") != expected_prompt:
+        raise ValueError("Training sample prompt does not match its versioned observation and task.")
+    return obs
+
+
+def build_sft_datum(sample: dict[str, Any], backend: TinkerBackend, max_seq_length: int) -> Any:
+    """Action: mean answer-token NLL. Belief: exactly one binary-label token."""
+    validate_training_sample(sample)
+    messages = [{"role": "system", "content": sample["system"]},
+                {"role": "user", "content": sample["prompt"]}]
+    tokenizer = backend.tokenizer
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False,
+                add_generation_prompt=True, enable_thinking=False)
+    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=False)
+    if sample["task"] == "belief":
+        labels = [tokenizer.encode(label, add_special_tokens=False) for label in ("0", "1")]
+        if any(len(tokens) != 1 for tokens in labels) or labels[0] == labels[1]:
+            raise ValueError("Binary belief labels 0 and 1 must be distinct single tokens.")
+        completion_tokens = labels[int(sample["completion"])]
+        tokens = prompt_tokens + completion_tokens
+    else:
+        full = tokenizer.apply_chat_template(messages + [{"role": "assistant", "content": sample["completion"]}],
+                    tokenize=False, add_generation_prompt=False, enable_thinking=False)
+        if not full.startswith(prompt):
+            raise ValueError("Training chat template does not preserve the inference prompt prefix.")
+        tokens = tokenizer.encode(full, add_special_tokens=False)
+        if tokens[:len(prompt_tokens)] != prompt_tokens:
+            raise ValueError("Training token boundary differs from the inference prompt.")
+        completion_tokens = tokens[len(prompt_tokens):]
+    if not completion_tokens:
+        raise ValueError("SFT completion has no tokens.")
+    if len(tokens) > max_seq_length:
+        raise ValueError(f"Sample {sample.get('sample_id', '?')} has {len(tokens)} tokens, "
+                         f"exceeding max_seq_length={max_seq_length}; no JSON was truncated.")
+    weights = [0.0] * len(prompt_tokens) + [1.0 / len(completion_tokens)] * len(completion_tokens)
+    return backend.sdk.Datum(model_input=backend.sdk.ModelInput.from_ints(tokens[:-1]),
+        loss_fn_inputs={"target_tokens": tokens[1:], "weights": weights[1:]})
+
+
+def _list(value: Any) -> list[Any]:
+    return value.tolist() if hasattr(value, "tolist") else list(value)
+
+
+def batch_loss(result: Any, data: list[Any]) -> tuple[float, float]:
+    """Return weighted NLL sum and weight sum (one unit per decision sample)."""
+    if len(result.loss_fn_outputs) != len(data):
+        raise RuntimeError("Tinker loss output count differs from batch size.")
+    total, count = 0.0, 0.0
+    for output, datum in zip(result.loss_fn_outputs, data):
+        logprobs = _list(output["logprobs"])
+        weights = _list(datum.loss_fn_inputs["weights"])
+        if len(logprobs) != len(weights):
+            raise RuntimeError("Tinker logprob lengths do not align with completion masks.")
+        for logprob, weight in zip(logprobs, weights):
+            total -= float(logprob) * float(weight)
+            count += float(weight)
+    if count <= 0 or not math.isfinite(total):
+        raise RuntimeError("Training returned invalid supervised-token loss.")
+    return total, count
 
 
 def run_tinker_lora_sft(
-    samples: list[dict[str, Any]],
-    output_dir: str | Path,
-    base_model: str = "Qwen/Qwen3.5-9B",
-    lora_rank: int = 16,
-    lora_alpha: int = 32,
-    learning_rate: float = 2e-4,
-    num_epochs: int = 3,
-    batch_size: int = 32,
-    seed: int = 42,
+    samples: list[dict[str, Any]], output_dir: str | Path,
+    base_model: str = "Qwen/Qwen3.5-9B", lora_rank: int = 16,
+    learning_rate: float = 2e-4, num_epochs: int = 3, batch_size: int = 32, seed: int = 42,
+    *, backend: TinkerBackend | None = None,
+    splits: dict[str, list[dict[str, Any]]] | None = None,
+    max_seq_length: int = 16384, warmup_ratio: float = .05,
+    resume_from: str | None = None, resume_metadata: dict[str, Any] | None = None,
+    resume: bool = False, stage: str = "sft", checkpoint_ttl_seconds: int | None = None,
+    train_attn: bool = True, train_mlp: bool = True, train_unembed: bool = False,
 ) -> dict[str, Any]:
-    """执行 Qwen3.5-9B LoRA 监督微调并记录模型版本、配置、Loss 曲线及实际/估算成本.
+    """Use equal task counts per batch; cycle the shorter task within each epoch.
 
-    若当前环境已安装并配置 Tinker SDK (`tinker`)，可对接远端训练任务；
-    同时提供完整的本地确定性训练与统计校准导出，产出适配器元数据与训练账单。
+    Validation reports both task losses independently. Only action validation NLL
+    chooses the exported checkpoint. Epoch resume restores optimizer state.
     """
-    t0 = time.perf_counter()
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    splits = split_dataset_by_game_id(samples, train_ratio=0.8, val_ratio=0.1, seed=seed)
-    train_data = splits["train"]
-    val_data = splits["val"]
-    test_data = splits["test"]
-
-    # 保存划分后的数据集
-    for split_name, split_rows in splits.items():
-        split_file = out_dir / f"{split_name}.jsonl"
-        with split_file.open("w", encoding="utf-8") as f:
-            for r in split_rows:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
-
-    # 统计总训练 Token 数与优势分布
-    total_train_tokens = sum(
-        (len(r["system"]) + len(r["prompt"]) + len(r["completion"])) // 3
-        for r in train_data
-    ) * num_epochs
-    avg_advantage = (
-        sum(float(r.get("rollout_advantage", 0.0)) for r in train_data)
-        / max(1, len(train_data))
-    )
-
-    total_steps = max(1, math.ceil(len(train_data) * num_epochs / max(1, batch_size)))
-    loss_curve: list[dict[str, float]] = []
-    for step in range(1, total_steps + 1):
-        progress = step / total_steps
-        train_loss = 1.85 * math.exp(-2.4 * progress) + 0.32
-        val_loss = 1.90 * math.exp(-2.2 * progress) + 0.36
-        loss_curve.append(
-            {
-                "step": step,
-                "progress": round(progress, 3),
-                "train_loss": round(train_loss, 4),
-                "val_loss": round(val_loss, 4),
-            }
-        )
-
-    # 核算 Tinker 训练成本（参考费率：$0.80 / 1M training tokens）
-    training_cost_usd = round((total_train_tokens / 1_000_000.0) * 0.80, 6)
-    elapsed_sec = round(time.perf_counter() - t0, 3)
-
-    adapter_metadata = {
-        "adapter_name": "qwen35_9b_liars_lora_sft_v1",
-        "base_model": base_model,
-        "platform": "tinker",
-        "lora_config": {
-            "r": lora_rank,
-            "lora_alpha": lora_alpha,
-            "target_modules": [
-                "q_proj",
-                "k_proj",
-                "v_proj",
-                "o_proj",
-                "gate_proj",
-                "up_proj",
-                "down_proj",
-            ],
-        },
-        "dataset_summary": {
-            "total_samples": len(samples),
-            "train_samples": len(train_data),
-            "val_samples": len(val_data),
-            "test_samples": len(test_data),
-            "avg_rollout_advantage": round(avg_advantage, 4),
-        },
-        "training_metrics": {
-            "num_epochs": num_epochs,
-            "batch_size": batch_size,
-            "learning_rate": learning_rate,
-            "total_steps": total_steps,
-            "final_train_loss": loss_curve[-1]["train_loss"],
-            "final_val_loss": loss_curve[-1]["val_loss"],
-            "loss_curve": loss_curve,
-        },
-        "cost_accounting": {
-            "total_training_tokens": total_train_tokens,
-            "estimated_training_cost_usd": training_cost_usd,
-            "wall_time_sec": elapsed_sec,
-        },
-    }
-
-    (out_dir / "adapter_metadata.json").write_text(
-        json.dumps(adapter_metadata, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    return adapter_metadata
+    if num_epochs < 1 or batch_size < 2 or batch_size % 2 or lora_rank < 1 or learning_rate <= 0:
+        raise ValueError("Use positive epochs/rank/rate and an even batch_size of at least 2.")
+    if not 0 <= warmup_ratio < 1:
+        raise ValueError("warmup_ratio must be in [0, 1).")
+    # Validate every provided row, including test rows, before constructing an API backend.
+    all_rows = samples + [row for rows in (splits or {}).values() for row in rows]
+    for row in all_rows:
+        validate_training_sample(row)
+    if resume_from is not None:
+        require_contract(resume_metadata or {}, "source checkpoint metadata")
+        if resume_metadata.get("state_path") != resume_from or resume_metadata.get("base_model") != base_model:
+            raise ValueError("Source checkpoint metadata does not match its state path/model.")
+    splits = splits if splits is not None else split_dataset_by_game_id(samples, train_ratio=.8, val_ratio=.1, seed=seed)
+    grouped = {name: {task: [row for row in rows if row["task"] == task] for task in ("action", "belief")}
+               for name, rows in splits.items()}
+    if any(not grouped.get(name, {}).get(task) for name in ("train", "val") for task in ("action", "belief")):
+        raise ValueError("Training and validation must each contain both action and belief samples.")
+    games = {key: {row["game_id"] for row in rows} for key, rows in splits.items()}
+    for left, right in (("train", "val"), ("train", "test"), ("val", "test")):
+        if games.get(left, set()) & games.get(right, set()):
+            raise ValueError(f"Game-level leakage between {left} and {right}.")
+    backend = backend or TinkerBackend(base_model=base_model)
+    if backend.base_model != base_model:
+        raise ValueError("Training model and backend model differ.")
+    data = {name: {task: [build_sft_datum(row, backend, max_seq_length) for row in rows]
+                   for task, rows in tasks.items()}
+            for name, tasks in grouped.items() if name in ("train", "val")}
+    fingerprint = hashlib.sha256(json.dumps(splits, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    out = Path(output_dir)
+    progress_path = out / "training_progress.json"
+    config = {"base_model": base_model, "lora_rank": lora_rank, "learning_rate": learning_rate,
+        "batch_size": batch_size, "seed": seed, "max_seq_length": max_seq_length,
+        "num_epochs": num_epochs, "warmup_ratio": warmup_ratio, "stage": stage,
+        "train_attn": train_attn, "train_mlp": train_mlp, "train_unembed": train_unembed,
+        "checkpoint_ttl_seconds": checkpoint_ttl_seconds,
+        "task_balance": "equal_per_batch_cycle_shorter", "checkpoint_selection": "val_action_loss"}
+    progress: dict[str, Any] = {}
+    if resume:
+        if not progress_path.exists():
+            raise ValueError("No completed-epoch checkpoint exists in this output directory.")
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        require_contract(progress, "training progress")
+        if progress["dataset_sha256"] != fingerprint:
+            raise ValueError("Cannot resume with a changed dataset.")
+        if progress.get("config") != config:
+            raise ValueError("Cannot resume with changed training configuration.")
+    elif progress_path.exists():
+        raise ValueError("Training output already has progress; use resume=True or a new output directory.")
+    backend.preflight()
+    if resume:
+        client = resolve_future(backend.service.create_training_client_from_state_with_optimizer(progress["resume_state_path"]))
+    elif resume_from:
+        client = resolve_future(backend.service.create_training_client_from_state(resume_from))
+    else:
+        client = resolve_future(backend.service.create_lora_training_client(base_model=base_model,
+                    rank=lora_rank, seed=seed, train_mlp=train_mlp, train_attn=train_attn, train_unembed=train_unembed))
+    out.mkdir(parents=True, exist_ok=True)
+    for split_name, rows in splits.items():
+        with (out / f"{split_name}.jsonl").open("w", encoding="utf-8") as stream:
+            for row in rows:
+                stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+    half = batch_size // 2
+    steps_per_epoch = math.ceil(max(len(rows) for rows in data["train"].values()) / half)
+    total_steps = steps_per_epoch * num_epochs
+    warmup_steps = math.ceil(total_steps * warmup_ratio)
+    loss_curve = progress.get("loss_curve", [])
+    best = progress.get("best", {})
+    start_time = time.perf_counter()
+    for epoch in range(int(progress.get("next_epoch", 0)), num_epochs):
+        orders = {}
+        for index, task in enumerate(("action", "belief")):
+            orders[task] = list(range(len(data["train"][task])))
+            random.Random(seed + 2 * epoch + index).shuffle(orders[task])
+        totals = {task: [0.0, 0.0] for task in ("action", "belief")}
+        for local_step in range(steps_per_epoch):
+            batch = [data["train"][task][orders[task][(local_step * half + offset) % len(orders[task])]]
+                     for task in ("action", "belief") for offset in range(half)]
+            step = epoch * steps_per_epoch + local_step + 1
+            result = backend.run_training_batch(client, batch, learning_rate=learning_rate * min(1, step / max(1, warmup_steps)))
+            for index, task in enumerate(("action", "belief")):
+                start, stop = index * half, (index + 1) * half
+                nll, count = batch_loss(SimpleNamespace(loss_fn_outputs=result.loss_fn_outputs[start:stop]), batch[start:stop])
+                totals[task][0] += nll
+                totals[task][1] += count
+        entry = {"epoch": epoch + 1, "step": (epoch + 1) * steps_per_epoch}
+        for task in ("action", "belief"):
+            entry[f"train_{task}_loss"] = totals[task][0] / totals[task][1]
+            nll_total = weight_total = 0.0
+            rows = data["val"][task]
+            for offset in range(0, len(rows), batch_size):
+                batch = rows[offset:offset + batch_size]
+                nll, count = batch_loss(backend.run_training_batch(client, batch, learning_rate=None), batch)
+                nll_total += nll
+                weight_total += count
+            entry[f"val_{task}_loss"] = nll_total / weight_total
+        entry["train_loss"] = (entry["train_action_loss"] + entry["train_belief_loss"]) / 2
+        entry["val_loss"] = entry["val_action_loss"]  # Compatibility alias, explicit selection criterion above.
+        loss_curve.append(entry)
+        state = resolve_future(client.save_state(name=f"{stage}-epoch-{epoch + 1}", ttl_seconds=checkpoint_ttl_seconds))
+        if not best or entry["val_action_loss"] < best["val_loss"]:
+            sampler = resolve_future(client.save_weights_for_sampler(name=f"{stage}-best-epoch-{epoch + 1}", ttl_seconds=checkpoint_ttl_seconds))
+            best = {"epoch": epoch + 1, "val_loss": entry["val_action_loss"],
+                    "sampler_path": sampler.path, "state_path": state.path}
+        _write_json(progress_path, {"contract": current_contract(), "dataset_sha256": fingerprint,
+            "config": config, "next_epoch": epoch + 1, "resume_state_path": state.path,
+            "best": best, "loss_curve": loss_curve})
+        _write_json(out / "loss_curve.json", loss_curve)
+    metadata = {"contract": current_contract(), "adapter_name": f"qwen35_9b_liars_lora_{stage}",
+        "base_model": base_model, "platform": "tinker", "backend": "tinker", "stage": stage,
+        "tasks": ["action", "belief"], "sampler_path": best["sampler_path"], "state_path": best["state_path"],
+        "best_epoch": best["epoch"], "best_val_loss": best["val_loss"],
+        "dataset_sha256": fingerprint, "source_state_path": resume_from,
+        "lora_config": {"r": lora_rank, "train_mlp": train_mlp, "train_attn": train_attn, "train_unembed": train_unembed},
+        "dataset_summary": {name: {task: len(rows) for task, rows in tasks.items()} for name, tasks in grouped.items()},
+        "training_metrics": {**config, "total_steps": total_steps,
+            "final_train_loss": loss_curve[-1]["train_loss"], "final_val_loss": loss_curve[-1]["val_loss"],
+            "loss_curve": loss_curve},
+        "cost_accounting": {**backend.ledger.snapshot(), "wall_time_sec": time.perf_counter() - start_time,
+                            "rates_per_million_tokens": backend.rates},
+        "checkpoint_ttl_seconds": checkpoint_ttl_seconds}
+    _write_json(out / "adapter_metadata.json", metadata)
+    return metadata

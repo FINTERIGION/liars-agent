@@ -8,16 +8,29 @@ from typing import Any, Tuple
 
 from liars_agent.agents.base import (
     BaseAgent,
-    estimate_bayesian_bluff_belief,
+    estimate_heuristic_bluff_belief,
     split_play_actions,
+    public_opponent_profile,
+    describe_action,
 )
 from liars_agent.engine.observation import PlayerObservation
 from liars_agent.engine.types import AgentDecisionRecord, CandidateAction
 
 
+def _rule_record(obs: PlayerObservation, **fields: Any) -> AgentDecisionRecord:
+    fields["estimated_opponent_style"] = "unknown"
+    fields["belief_source"] = "heuristic" if obs.last_claim else "none"
+    fields["opponent_profile"] = public_opponent_profile(obs)
+    if not obs.last_claim:
+        fields["belief_bluff_prob"] = None
+    if len(obs.legal_actions) == 1 and obs.legal_actions[0].action_type == "CHALLENGE":
+        fields["rationale"] = describe_action(obs, obs.legal_actions[0])
+    return AgentDecisionRecord(**fields)
+
+
 def _step_rng(base_seed: int, obs: PlayerObservation) -> random.Random:
     """根据基础种子与当前观测步构造确定性随机数生成器，确保回放可复现."""
-    key = f"{base_seed}:{obs.game_id}:{obs.round_id}:{obs.step_id}:{obs.observer_seat}"
+    key = f"{base_seed}:{obs.round_id}:{obs.step_id}:{obs.observer_seat}"
     seed_int = int.from_bytes(hashlib.sha256(key.encode("utf-8")).digest()[:8], "big")
     return random.Random(seed_int)
 
@@ -41,7 +54,7 @@ class HonestConservativeBot(BaseAgent):
         self, obs: PlayerObservation
     ) -> Tuple[CandidateAction, AgentDecisionRecord]:
         rng = _step_rng(self.seed, obs)
-        bluff_prob, est_style, rationale = estimate_bayesian_bluff_belief(
+        bluff_prob, est_style, rationale = estimate_heuristic_bluff_belief(
             obs, use_history_adaptation=False
         )
 
@@ -52,7 +65,7 @@ class HonestConservativeBot(BaseAgent):
         if challenge_actions and (
             len(obs.legal_actions) == 1 or bluff_prob >= self.challenge_threshold
         ):
-            return challenge_actions[0], AgentDecisionRecord(
+            return challenge_actions[0], _rule_record(obs,
                 belief_bluff_prob=bluff_prob,
                 estimated_opponent_style=est_style,
                 rationale=f"[HonestConservative] 诈唬概率 {bluff_prob:.2f} >= 阈值 {self.challenge_threshold:.2f}，选择质疑。",
@@ -62,7 +75,7 @@ class HonestConservativeBot(BaseAgent):
         if truthful:
             single_or_double = [a for a in truthful if len(a.cards) <= 2] or truthful
             chosen = single_or_double[0]
-            return chosen, AgentDecisionRecord(
+            return chosen, _rule_record(obs,
                 belief_bluff_prob=bluff_prob if obs.last_claim else None,
                 estimated_opponent_style=est_style,
                 rationale="[HonestConservative] 手中有真牌，诚实打出真牌。",
@@ -70,7 +83,7 @@ class HonestConservativeBot(BaseAgent):
 
         # 无真牌时被迫诈唬：若有 CHALLENGE 且自身风险低，小概率直接质疑，否则出单张假牌
         if challenge_actions and bluff_prob >= 0.55 and rng.random() < 0.35:
-            return challenge_actions[0], AgentDecisionRecord(
+            return challenge_actions[0], _rule_record(obs,
                 belief_bluff_prob=bluff_prob,
                 estimated_opponent_style=est_style,
                 rationale="[HonestConservative] 无真牌可出且上家可疑，转为质疑。",
@@ -78,7 +91,7 @@ class HonestConservativeBot(BaseAgent):
 
         bluff_candidates = sorted(pure_bluff + mixed_bluff, key=lambda a: len(a.cards))
         chosen = bluff_candidates[0] if bluff_candidates else obs.legal_actions[-1]
-        return chosen, AgentDecisionRecord(
+        return chosen, _rule_record(obs,
             belief_bluff_prob=bluff_prob if obs.last_claim else None,
             estimated_opponent_style=est_style,
             rationale="[HonestConservative] 无真牌可出，最小化风险打出单张假牌。",
@@ -106,7 +119,7 @@ class AggressiveBlufferBot(BaseAgent):
         self, obs: PlayerObservation
     ) -> Tuple[CandidateAction, AgentDecisionRecord]:
         rng = _step_rng(self.seed, obs)
-        bluff_prob, est_style, _ = estimate_bayesian_bluff_belief(
+        bluff_prob, est_style, _ = estimate_heuristic_bluff_belief(
             obs, use_history_adaptation=False
         )
         challenge_actions = [a for a in obs.legal_actions if a.action_type == "CHALLENGE"]
@@ -115,7 +128,7 @@ class AggressiveBlufferBot(BaseAgent):
         if challenge_actions and (
             len(obs.legal_actions) == 1 or bluff_prob >= self.challenge_threshold
         ):
-            return challenge_actions[0], AgentDecisionRecord(
+            return challenge_actions[0], _rule_record(obs,
                 belief_bluff_prob=bluff_prob,
                 estimated_opponent_style=est_style,
                 rationale=f"[AggressiveBluffer] 仅在极高把握 ({bluff_prob:.2f}) 或强制时质疑。",
@@ -128,7 +141,7 @@ class AggressiveBlufferBot(BaseAgent):
                 chosen = rng.choice(multi_bluffs)
             else:
                 chosen = rng.choice(all_bluffs)
-            return chosen, AgentDecisionRecord(
+            return chosen, _rule_record(obs,
                 belief_bluff_prob=bluff_prob if obs.last_claim else None,
                 estimated_opponent_style=est_style,
                 rationale=f"[AggressiveBluffer] 主动施压诈唬，打出 {len(chosen.cards)} 张牌。",
@@ -137,13 +150,13 @@ class AggressiveBlufferBot(BaseAgent):
         if truthful:
             multi_truth = [a for a in truthful if len(a.cards) >= 2]
             chosen = multi_truth[-1] if multi_truth else truthful[0]
-            return chosen, AgentDecisionRecord(
+            return chosen, _rule_record(obs,
                 belief_bluff_prob=bluff_prob if obs.last_claim else None,
                 estimated_opponent_style=est_style,
                 rationale="[AggressiveBluffer] 打出多张真牌快速倾泻手牌。",
             )
 
-        return obs.legal_actions[0], AgentDecisionRecord(
+        return obs.legal_actions[0], _rule_record(obs,
             belief_bluff_prob=bluff_prob if obs.last_claim else None,
             estimated_opponent_style=est_style,
             rationale="[AggressiveBluffer] 默认回退动作。",
@@ -151,7 +164,7 @@ class AggressiveBlufferBot(BaseAgent):
 
 
 class CardCounterBot(BaseAgent):
-    """3. 记牌精算型（训练对手池）：基于超几何后验与自身左轮剩余枪膛风险计算期望效用."""
+    """3. 记牌精算型（训练对手池）：使用手牌容量参考值、启发式与自身枪膛风险选择动作."""
 
     def __init__(
         self,
@@ -169,7 +182,7 @@ class CardCounterBot(BaseAgent):
         self, obs: PlayerObservation
     ) -> Tuple[CandidateAction, AgentDecisionRecord]:
         rng = _step_rng(self.seed, obs)
-        bluff_prob, est_style, rationale = estimate_bayesian_bluff_belief(
+        bluff_prob, est_style, rationale = estimate_heuristic_bluff_belief(
             obs, use_history_adaptation=True
         )
         challenge_actions = [a for a in obs.legal_actions if a.action_type == "CHALLENGE"]
@@ -186,7 +199,7 @@ class CardCounterBot(BaseAgent):
         if challenge_actions and (
             len(obs.legal_actions) == 1 or bluff_prob >= dynamic_cutoff
         ):
-            return challenge_actions[0], AgentDecisionRecord(
+            return challenge_actions[0], _rule_record(obs,
                 belief_bluff_prob=bluff_prob,
                 estimated_opponent_style=est_style,
                 rationale=(
@@ -199,7 +212,7 @@ class CardCounterBot(BaseAgent):
         if pure_bluff and len(truthful) >= 1 and own_lethal <= 0.25 and rng.random() < 0.35:
             single_bluffs = [a for a in pure_bluff if len(a.cards) == 1]
             if single_bluffs:
-                return single_bluffs[0], AgentDecisionRecord(
+                return single_bluffs[0], _rule_record(obs,
                     belief_bluff_prob=bluff_prob if obs.last_claim else None,
                     estimated_opponent_style=est_style,
                     rationale="[CardCounter] 低风险下先行试探打出1张假牌，保留真牌用于残局防守。",
@@ -208,7 +221,7 @@ class CardCounterBot(BaseAgent):
         if truthful:
             # 优先出1~2张真牌保持手牌结构
             chosen = truthful[0]
-            return chosen, AgentDecisionRecord(
+            return chosen, _rule_record(obs,
                 belief_bluff_prob=bluff_prob if obs.last_claim else None,
                 estimated_opponent_style=est_style,
                 rationale="[CardCounter] 稳健打出真牌。",
@@ -216,7 +229,7 @@ class CardCounterBot(BaseAgent):
 
         bluff_candidates = sorted(pure_bluff + mixed_bluff, key=lambda a: len(a.cards))
         chosen = bluff_candidates[0] if bluff_candidates else obs.legal_actions[0]
-        return chosen, AgentDecisionRecord(
+        return chosen, _rule_record(obs,
             belief_bluff_prob=bluff_prob if obs.last_claim else None,
             estimated_opponent_style=est_style,
             rationale="[CardCounter] 手中无真牌，选择最低暴露风险的单张出牌。",
@@ -242,7 +255,7 @@ class ParanoidHunterBot(BaseAgent):
         self, obs: PlayerObservation
     ) -> Tuple[CandidateAction, AgentDecisionRecord]:
         rng = _step_rng(self.seed, obs)
-        bluff_prob, est_style, _ = estimate_bayesian_bluff_belief(
+        bluff_prob, est_style, _ = estimate_heuristic_bluff_belief(
             obs, use_history_adaptation=True
         )
         challenge_actions = [a for a in obs.legal_actions if a.action_type == "CHALLENGE"]
@@ -250,7 +263,7 @@ class ParanoidHunterBot(BaseAgent):
 
         if challenge_actions and obs.last_claim is not None:
             if len(obs.legal_actions) == 1:
-                return challenge_actions[0], AgentDecisionRecord(
+                return challenge_actions[0], _rule_record(obs,
                     belief_bluff_prob=bluff_prob,
                     estimated_opponent_style=est_style,
                     rationale="[ParanoidHunter] 强制质疑。",
@@ -259,7 +272,7 @@ class ParanoidHunterBot(BaseAgent):
             if claimed_n >= 2 and (
                 bluff_prob >= 0.40 or rng.random() < self.multi_claim_challenge_prob
             ):
-                return challenge_actions[0], AgentDecisionRecord(
+                return challenge_actions[0], _rule_record(obs,
                     belief_bluff_prob=bluff_prob,
                     estimated_opponent_style=est_style,
                     rationale=f"[ParanoidHunter] 针对上家多张声称({claimed_n}张)发起高压猎杀质疑。",
@@ -267,14 +280,14 @@ class ParanoidHunterBot(BaseAgent):
             if claimed_n == 1 and (
                 bluff_prob >= 0.52 or rng.random() < self.single_claim_challenge_prob
             ):
-                return challenge_actions[0], AgentDecisionRecord(
+                return challenge_actions[0], _rule_record(obs,
                     belief_bluff_prob=bluff_prob,
                     estimated_opponent_style=est_style,
                     rationale="[ParanoidHunter] 主动突袭质疑上家单张声称。",
                 )
 
         if truthful:
-            return truthful[0], AgentDecisionRecord(
+            return truthful[0], _rule_record(obs,
                 belief_bluff_prob=bluff_prob if obs.last_claim else None,
                 estimated_opponent_style=est_style,
                 rationale="[ParanoidHunter] 自身出牌极度克制，优先打单张真牌。",
@@ -282,7 +295,7 @@ class ParanoidHunterBot(BaseAgent):
 
         bluff_candidates = sorted(pure_bluff + mixed_bluff, key=lambda a: len(a.cards))
         chosen = bluff_candidates[0] if bluff_candidates else obs.legal_actions[0]
-        return chosen, AgentDecisionRecord(
+        return chosen, _rule_record(obs,
             belief_bluff_prob=bluff_prob if obs.last_claim else None,
             estimated_opponent_style=est_style,
             rationale="[ParanoidHunter] 被迫单张诈唬。",
@@ -310,7 +323,7 @@ class ChameleonAdaptiveBot(BaseAgent):
         self, obs: PlayerObservation
     ) -> Tuple[CandidateAction, AgentDecisionRecord]:
         rng = _step_rng(self.seed, obs)
-        bluff_prob, est_style, _ = estimate_bayesian_bluff_belief(
+        bluff_prob, est_style, _ = estimate_heuristic_bluff_belief(
             obs, use_history_adaptation=True
         )
         challenge_actions = [a for a in obs.legal_actions if a.action_type == "CHALLENGE"]
@@ -324,7 +337,7 @@ class ChameleonAdaptiveBot(BaseAgent):
         if challenge_actions and (
             len(obs.legal_actions) == 1 or bluff_prob >= challenge_cutoff
         ):
-            return challenge_actions[0], AgentDecisionRecord(
+            return challenge_actions[0], _rule_record(obs,
                 belief_bluff_prob=bluff_prob,
                 estimated_opponent_style=est_style,
                 rationale=f"[ChameleonAdaptive] 风险模式={'保守' if high_risk_mode else '激进'}，触发质疑。",
@@ -340,7 +353,7 @@ class ChameleonAdaptiveBot(BaseAgent):
                 if high_risk_mode
                 else rng.choice(all_bluffs)
             )
-            return chosen, AgentDecisionRecord(
+            return chosen, _rule_record(obs,
                 belief_bluff_prob=bluff_prob if obs.last_claim else None,
                 estimated_opponent_style=est_style,
                 rationale=f"[ChameleonAdaptive] 动态策略切换（高风险={high_risk_mode}），执行诈唬出牌。",
@@ -348,13 +361,13 @@ class ChameleonAdaptiveBot(BaseAgent):
 
         if truthful:
             chosen = truthful[0] if high_risk_mode else truthful[-1]
-            return chosen, AgentDecisionRecord(
+            return chosen, _rule_record(obs,
                 belief_bluff_prob=bluff_prob if obs.last_claim else None,
                 estimated_opponent_style=est_style,
                 rationale=f"[ChameleonAdaptive] 动态策略切换（高风险={high_risk_mode}），打出真牌。",
             )
 
-        return obs.legal_actions[0], AgentDecisionRecord(
+        return obs.legal_actions[0], _rule_record(obs,
             belief_bluff_prob=bluff_prob if obs.last_claim else None,
             estimated_opponent_style=est_style,
             rationale="[ChameleonAdaptive] 回退动作。",
@@ -388,9 +401,4 @@ def create_rule_agent(
         )
     cls = RULE_BOT_REGISTRY[agent_type]
     resolved_name = name or agent_type
-    # 过滤掉目标类不支持的额外配置字段
-    import inspect
-
-    sig = inspect.signature(cls.__init__)
-    valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
-    return cls(name=resolved_name, seed=seed, **valid_kwargs)
+    return cls(name=resolved_name, seed=seed, **kwargs)

@@ -8,6 +8,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from liars_agent.contracts import RULES_VERSION
 from liars_agent.engine.observation import PlayerObservation
 from liars_agent.engine.types import (
     STANDARD_DECK_COUNTS,
@@ -86,15 +87,19 @@ class LiarsBarEngine:
         hand_size: int = 5,
         max_play_cards: int = 3,
         max_chambers: int = 6,
+        record_truth: bool = True,
     ) -> None:
-        if num_players != 4:
-            raise ValueError("Research rules specify a 4-player game (num_players=4).")
+        fixed = (num_players, hand_size, max_play_cards, max_chambers)
+        if any(type(value) is not int for value in fixed) or fixed != (4, 5, 3, 6):
+            raise ValueError("Fixed research rules require num_players=4, hand_size=5, max_play_cards=3, max_chambers=6.")
+        self.rules_version = RULES_VERSION
         self.game_id = game_id
         self.game_seed = int(game_seed)
         self.num_players = num_players
         self.hand_size = hand_size
         self.max_play_cards = max_play_cards
         self.max_chambers = max_chambers
+        self.record_truth = record_truth
 
         # 玩家存活与左轮状态
         self.alive: list[bool] = [True] * num_players
@@ -114,6 +119,7 @@ class LiarsBarEngine:
         self.current_turn_seat: int = 0
         self.pending_play: Optional[PendingPlayTruth] = None
         self.current_round_history: list[PublicEvent] = []
+        self.past_public_actions: list[PublicEvent] = []
         self.past_rounds_history: list[RoundResolution] = []
         self.step_truth_logs: list[StepTruthRecord] = []
         self.winner_seat: Optional[int] = None
@@ -149,6 +155,7 @@ class LiarsBarEngine:
         self.round_id += 1
         self.step_id = 0
         self.pending_play = None
+        self.past_public_actions.extend(self.current_round_history)
         self.current_round_history = []
         self.played_cards_this_round = [[] for _ in range(self.num_players)]
 
@@ -261,7 +268,6 @@ class LiarsBarEngine:
         legal = self.get_legal_actions(obs_seat) if obs_seat == self.current_turn_seat else ()
 
         return PlayerObservation(
-            game_id=self.game_id,
             round_id=self.round_id,
             step_id=self.step_id,
             observer_seat=obs_seat,
@@ -272,6 +278,7 @@ class LiarsBarEngine:
             last_claim=last_claim,
             current_round_history=tuple(self.current_round_history),
             past_rounds_history=tuple(self.past_rounds_history),
+            past_public_actions=tuple(self.past_public_actions),
             legal_actions=legal,
             ablation_mode="full",
         )
@@ -290,8 +297,8 @@ class LiarsBarEngine:
             raise RuntimeError("Cannot call step() on a finished game.")
 
         actor_seat = self.current_turn_seat
-        obs_before = self.get_observation(actor_seat)
-        legal_actions = obs_before.legal_actions
+        obs_before = self.get_observation(actor_seat) if self.record_truth else None
+        legal_actions = obs_before.legal_actions if obs_before else self.get_legal_actions(actor_seat)
         if not legal_actions:
             raise RuntimeError(f"Seat {actor_seat} has no legal actions.")
 
@@ -326,8 +333,8 @@ class LiarsBarEngine:
                 raise RuntimeError("Cannot play without another alive player holding cards.")
 
         rec = decision_record or AgentDecisionRecord()
-        hands_snapshot = {s: list(self.hands[s]) for s in range(self.num_players)}
-        chambers_snapshot = {s: self.fatal_chamber_slot[s] for s in range(self.num_players)}
+        hands_snapshot = {s: list(self.hands[s]) for s in range(self.num_players)} if self.record_truth else {}
+        chambers_snapshot = {s: self.fatal_chamber_slot[s] for s in range(self.num_players)} if self.record_truth else {}
         pending_cards_snapshot = (
             list(self.pending_play.actual_cards) if self.pending_play is not None else None
         )
@@ -363,23 +370,24 @@ class LiarsBarEngine:
             )
             self.current_round_history.append(pub_event)
 
-            self.step_truth_logs.append(
-                StepTruthRecord(
-                    game_id=self.game_id,
-                    round_id=self.round_id,
-                    step_id=self.step_id,
-                    actor_seat=actor_seat,
-                    target_rank=self.target_rank,
-                    observation=obs_before.to_dict(),
-                    chosen_action=resolved_action.to_dict(),
-                    decision_record=rec.to_dict(),
-                    ground_truth_hands=hands_snapshot,
-                    ground_truth_fatal_chambers=chambers_snapshot,
-                    pending_claim_actual_cards=pending_cards_snapshot,
-                    pending_claim_was_bluff=pending_bluff_snapshot,
-                    round_resolution=None,
+            if self.record_truth:
+                self.step_truth_logs.append(
+                    StepTruthRecord(
+                        game_id=self.game_id,
+                        round_id=self.round_id,
+                        step_id=self.step_id,
+                        actor_seat=actor_seat,
+                        target_rank=self.target_rank,
+                        observation=obs_before.to_dict(),  # type: ignore[union-attr]
+                        chosen_action=resolved_action.to_dict(),
+                        decision_record=rec.to_dict(),
+                        ground_truth_hands=hands_snapshot,
+                        ground_truth_fatal_chambers=chambers_snapshot,
+                        pending_claim_actual_cards=pending_cards_snapshot,
+                        pending_claim_was_bluff=pending_bluff_snapshot,
+                        round_resolution=None,
+                    )
                 )
-            )
 
             # 跳过已空手玩家；若下家是最后一名有牌者，则其必须质疑本次出牌。
             self.current_turn_seat = next_seat
@@ -428,23 +436,24 @@ class LiarsBarEngine:
         )
         self.past_rounds_history.append(resolution)
 
-        self.step_truth_logs.append(
-            StepTruthRecord(
-                game_id=self.game_id,
-                round_id=self.round_id,
-                step_id=self.step_id,
-                actor_seat=actor_seat,
-                target_rank=self.target_rank,
-                observation=obs_before.to_dict(),
-                chosen_action=resolved_action.to_dict(),
-                decision_record=rec.to_dict(),
-                ground_truth_hands=hands_snapshot,
-                ground_truth_fatal_chambers=chambers_snapshot,
-                pending_claim_actual_cards=pending_cards_snapshot,
-                pending_claim_was_bluff=pending_bluff_snapshot,
-                round_resolution=resolution.to_dict(),
+        if self.record_truth:
+            self.step_truth_logs.append(
+                StepTruthRecord(
+                    game_id=self.game_id,
+                    round_id=self.round_id,
+                    step_id=self.step_id,
+                    actor_seat=actor_seat,
+                    target_rank=self.target_rank,
+                    observation=obs_before.to_dict(),  # type: ignore[union-attr]
+                    chosen_action=resolved_action.to_dict(),
+                    decision_record=rec.to_dict(),
+                    ground_truth_hands=hands_snapshot,
+                    ground_truth_fatal_chambers=chambers_snapshot,
+                    pending_claim_actual_cards=pending_cards_snapshot,
+                    pending_claim_was_bluff=pending_bluff_snapshot,
+                    round_resolution=resolution.to_dict(),
+                )
             )
-        )
 
         alive_remaining = self.alive_seats()
         if len(alive_remaining) == 1:

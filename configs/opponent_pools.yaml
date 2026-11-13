@@ -5,22 +5,21 @@ seen_pool:
     - id: "honest_conservative"
       class: "HonestConservativeBot"
       params:
-        bluff_prob_when_forced: 0.15
-        challenge_threshold: 0.25
+        challenge_threshold: 0.72
     - id: "aggressive_bluffer"
       class: "AggressiveBlufferBot"
       params:
         bluff_rate: 0.65
         multi_card_bias: 0.55
-        challenge_threshold: 0.15
+        challenge_threshold: 0.80
     - id: "card_counter"
       class: "CardCounterBot"
       params:
         risk_aversion: 1.0
-        posterior_challenge_cutoff: 0.32
+        posterior_challenge_cutoff: 0.64
 
 unseen_pool:
-  description: "用于泛化能力测试的未见对手池（多疑猎手型 + 变色龙自适应型）"
+  description: "含两类未见对手的混合测试池：多疑猎手型、变色龙自适应型与训练可见的记牌型"
   agents:
     - id: "paranoid_hunter"
       class: "ParanoidHunterBot"
@@ -31,7 +30,6 @@ unseen_pool:
       class: "ChameleonAdaptiveBot"
       params:
         high_risk_shots_threshold: 2
-        early_round_honesty_ rounds: 1
         low_risk_bluff_rate: 0.70
         high_risk_bluff_rate: 0.10
 

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import tempfile
+import copy
 import unittest
 from pathlib import Path
 
-from liars_agent.agents.llm_agent import LLMAgent
 from liars_agent.agents.rule_bots import (
     AggressiveBlufferBot,
     CardCounterBot,
@@ -14,11 +14,13 @@ from liars_agent.agents.rule_bots import (
 )
 from liars_agent.engine.replay import (
     GameReplayBundle,
+    ReplayVerificationError,
     load_replays_jsonl,
     save_replays_jsonl,
     verify_replay_determinism,
 )
 from liars_agent.engine.state import LiarsBarEngine
+from liars_agent.engine.observation import apply_history_ablation
 from liars_agent.training.dataset_splitter import split_dataset_by_game_id
 
 
@@ -32,7 +34,7 @@ class TestReplayAndDeterminism(unittest.TestCase):
 
     def _run_single_game(self, seed: int) -> GameReplayBundle:
         agents = [
-            LLMAgent(name="qwen35_9b_lora_sft", mode="lora_sft", seed=seed),
+            CardCounterBot(name="rule_counter", seed=seed),
             HonestConservativeBot(seed=seed + 1),
             AggressiveBlufferBot(seed=seed + 2),
             CardCounterBot(seed=seed + 3),
@@ -60,6 +62,55 @@ class TestReplayAndDeterminism(unittest.TestCase):
             self.assertEqual(len(loaded), 5)
             for item in loaded:
                 self.assertTrue(verify_replay_determinism(item))
+
+    def test_verifier_checks_labels_hands_history_and_resolution(self) -> None:
+        original = self._run_single_game(seed=72).to_dict()
+        pending_index = next(i for i, step in enumerate(original["steps"])
+                             if step["pending_claim_was_bluff"] is not None)
+        mutations = {
+            "pending_claim_was_bluff": lambda d: d["steps"][pending_index].__setitem__(
+                "pending_claim_was_bluff", not d["steps"][pending_index]["pending_claim_was_bluff"]),
+            "ground_truth_hands": lambda d: d["steps"][0]["ground_truth_hands"].__setitem__(1, ["BROKEN"]),
+            "current_round_history": lambda d: d["steps"][pending_index]["observation"].__setitem__("current_round_history", []),
+            "rounds_summary": lambda d: d["rounds_summary"][0].__setitem__("was_bluff", not d["rounds_summary"][0]["was_bluff"]),
+        }
+        for field, mutate in mutations.items():
+            with self.subTest(field=field):
+                changed = copy.deepcopy(original)
+                mutate(changed)
+                self.assertFalse(verify_replay_determinism(changed))
+                with self.assertRaises(ReplayVerificationError) as caught:
+                    verify_replay_determinism(changed, raise_on_error=True)
+                self.assertIn(field, caught.exception.field)
+
+    def test_verifier_rejects_rehashed_corruption_and_changed_decision_metadata(self) -> None:
+        bundle = self._run_single_game(seed=73)
+        bundle.steps[0]["ground_truth_fatal_chambers"][0] = 99
+        # Recomputing the fingerprint must not disguise a deterministic-state error.
+        self.assertFalse(verify_replay_determinism(bundle.to_dict()))
+        data = self._run_single_game(seed=74).to_dict()
+        data["steps"][0]["decision_record"]["rationale"] = "changed recorded explanation"
+        with self.assertRaises(ReplayVerificationError) as caught:
+            verify_replay_determinism(data, raise_on_error=True)
+        self.assertEqual(caught.exception.field, "trajectory_hash")
+
+    def test_actual_ablated_observations_roundtrip(self) -> None:
+        for mode in ("current_round_only", "last_action_only"):
+            engine = LiarsBarEngine(game_seed=48)
+            while not engine.is_game_over():
+                observation = apply_history_ablation(engine.get_observation(), mode)
+                engine.step(observation.legal_actions[0])
+                engine.step_truth_logs[-1].observation = observation.to_dict()
+            replay = GameReplayBundle.from_engine(engine)
+            self.assertTrue(verify_replay_determinism(replay, raise_on_error=True))
+
+    def test_missing_or_old_replay_versions_are_rejected(self) -> None:
+        data = self._run_single_game(seed=44).to_dict()
+        for field in ("rules_version", "observation_version"):
+            invalid = {**data, field: "old"}
+            with self.assertRaises(ReplayVerificationError) as caught:
+                verify_replay_determinism(invalid, raise_on_error=True)
+            self.assertEqual(caught.exception.field, field)
 
     def test_game_level_dataset_split_has_zero_leakage(self) -> None:
         fake_samples = [

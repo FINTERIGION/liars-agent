@@ -1,42 +1,56 @@
-# Qwen3.5-9B LoRA 监督微调与续玩筛选实验配置 (Tinker Training & Sampling Config)
-experiment_name: "qwen35_9b_liars_bar_lora_v1"
-base_model: "Qwen/Qwen3.5-9B"
-platform: "tinker"
+experiment_name: qwen35_9b_liars_bar_multitask_v2
+base_model: Qwen/Qwen3.5-9B
+platform: tinker
+seed: 42
+opponent_config: opponent_pools.yaml
+budget_limit_usd: 5000
 
 dataset:
-  total_target_samples: 10000
+  total_target_samples: 10000  # action examples
+  belief_target_samples: 10000
+  num_games: 1000
+  max_games: 2000
+  workers: 8
+  batch_games: 20
   rollout_trajectories_per_state: 8
   min_advantage_margin: 0.05
-  split_by: "game_id"
+  split_by: game_id
   train_ratio: 0.8
   val_ratio: 0.1
-  test_ratio: 0.1
-  history_ablation_augmentation_ratio: 0.20
+  history_ablation_augmentation_ratio: 0.0
 
 lora:
   r: 16
-  lora_alpha: 32
-  lora_dropout: 0.05
-  target_modules:
-    - "q_proj"
-    - "k_proj"
-    - "v_proj"
-    - "o_proj"
-    - "gate_proj"
-    - "up_proj"
-    - "down_proj"
+  train_attn: true
+  train_mlp: true
+  train_unembed: false
 
 training:
   batch_size: 32
-  micro_batch_size: 4
   learning_rate: 2.0e-4
   num_epochs: 3
-  warmup_ratio: 0.05
-  max_seq_length: 1024
+  max_seq_length: 16384
   seed: 42
 
 sampling:
   temperature: 0.2
   top_p: 0.9
-  max_new_tokens: 96
-  fallback_strategy: "card_counter_safe"
+  max_new_tokens: 256
+  fallback_strategy: card_counter_safe
+
+rs:
+  target_samples: 2000
+  belief_target_samples: 2000
+  num_games: 400
+  max_games: 2000
+  candidates_per_state: 4
+  rollouts_per_candidate: 8
+  min_advantage_margin: 0.05
+  learning_rate: 5.0e-5
+  num_epochs: 1
+
+evaluation:
+  num_blocks: 45
+  bootstrap_samples: 10000
+  unseen_belief_samples: 1000
+  unseen_belief_max_games: 1000

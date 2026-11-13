@@ -4,9 +4,11 @@ from liars_agent.engine.observation import (
     PlayerObservation,
     apply_history_ablation,
     compute_combinatorial_truth_prior,
+    compute_hand_capacity_prior,
 )
 from liars_agent.engine.replay import (
     GameReplayBundle,
+    ReplayVerificationError,
     load_replays_jsonl,
     save_replays_jsonl,
     verify_replay_determinism,
@@ -36,6 +38,7 @@ __all__ = [
     "CardRank",
     "ClaimEvent",
     "GameReplayBundle",
+    "ReplayVerificationError",
     "LiarsBarEngine",
     "PlayerObservation",
     "PlayerPublicInfo",
@@ -45,6 +48,7 @@ __all__ = [
     "apply_history_ablation",
     "are_cards_truthful",
     "compute_combinatorial_truth_prior",
+    "compute_hand_capacity_prior",
     "is_card_truthful",
     "load_replays_jsonl",
     "save_replays_jsonl",

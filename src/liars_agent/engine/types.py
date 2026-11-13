@@ -162,6 +162,11 @@ class AgentDecisionRecord:
     latency_ms: float = 0.0
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    belief_completion_tokens_upper_bound: int = 0
+    belief_source: str = "none"
+    opponent_profile: dict[str, Any] = field(default_factory=dict)
+    fallback_record: Optional[dict[str, Any]] = None
+    rationale_source: str = "template"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
