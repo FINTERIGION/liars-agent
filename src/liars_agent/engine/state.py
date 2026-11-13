@@ -177,11 +177,8 @@ class LiarsBarEngine:
 
     def _must_force_challenge(self, seat: int) -> bool:
         """检查当前行动玩家是否因边界条件必须执行 CHALLENGE."""
-        if self.pending_play is None:
+        if self.pending_play is None or not self.alive[seat] or not self.hands[seat]:
             return False
-        # 当前行动玩家为空手时，只能质疑上一手。
-        if len(self.hands[seat]) == 0:
-            return True
         # 仅当前行动玩家还有牌时，必须立即质疑，不能再出牌。
         other_alive_with_cards = [
             s
@@ -195,13 +192,17 @@ class LiarsBarEngine:
         if self.is_game_over():
             return ()
         target_seat = self.current_turn_seat if seat is None else seat
-        if target_seat != self.current_turn_seat or not self.alive[target_seat]:
+        if (
+            target_seat != self.current_turn_seat
+            or not self.alive[target_seat]
+            or not self.hands[target_seat]
+        ):
             return ()
 
         actions: list[CandidateAction] = []
         idx = 0
 
-        # 1. 若存在上家出牌，CHALLENGE 始终是合法候选动作 A0
+        # 1. 有手牌的当前玩家可以质疑上一手；空手玩家不再参与本小局行动。
         if self.pending_play is not None:
             actions.append(
                 CandidateAction(action_id=f"A{idx}", action_type="CHALLENGE", cards=())
@@ -317,6 +318,13 @@ class LiarsBarEngine:
                 f"Legal actions: {[a.to_dict() for a in legal_actions]}"
             )
 
+        # 出牌只能交给仍有手牌的存活下家，不能让空手玩家重新参与质疑。
+        next_seat = None
+        if resolved_action.action_type == "PLAY":
+            next_seat = self._next_alive_seat_with_cards(actor_seat)
+            if next_seat is None:
+                raise RuntimeError("Cannot play without another alive player holding cards.")
+
         rec = decision_record or AgentDecisionRecord()
         hands_snapshot = {s: list(self.hands[s]) for s in range(self.num_players)}
         chambers_snapshot = {s: self.fatal_chamber_slot[s] for s in range(self.num_players)}
@@ -373,11 +381,7 @@ class LiarsBarEngine:
                 )
             )
 
-            # 寻找下一个有手牌的存活玩家；若只有一人或最后一名有手牌玩家接牌，将在其回合触发强制质疑
-            next_seat = self._next_alive_seat_with_cards(actor_seat)
-            if next_seat is None:
-                # 极端情况：所有其他存活玩家手牌均已空，立即由紧邻存活下家执行质疑
-                next_seat = self._next_alive_seat(actor_seat)
+            # 跳过已空手玩家；若下家是最后一名有牌者，则其必须质疑本次出牌。
             self.current_turn_seat = next_seat
             return None
 

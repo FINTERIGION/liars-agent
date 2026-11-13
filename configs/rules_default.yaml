@@ -23,6 +23,7 @@ revolver:
 boundary_rules:
   # 存在上一手出牌且除当前行动玩家外其余存活玩家均已空手时，当前玩家必须质疑上一手，不能继续出牌
   # 两人残局中上家打空手牌也属于该情形
+  # 空手玩家不再出牌或质疑；其刚打出的牌仍可被下家质疑，下家继续出牌后跳过该空手玩家
   force_challenge_when_others_empty: true
   force_challenge_on_two_player_empty_hand: true
   max_steps_per_round: 60

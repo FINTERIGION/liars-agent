@@ -118,5 +118,48 @@ class TestEngineRulesAndBoundaries(unittest.TestCase):
         self.assertTrue(any(a.action_type == "CHALLENGE" for a in engine.get_legal_actions()))
 
 
+    def test_empty_player_has_no_challenge_or_play_actions(self) -> None:
+        engine = LiarsBarEngine(game_seed=10)
+        engine.hands = [["Q"], ["K", "K"], ["A", "A"], ["Q", "Q"]]
+        engine.current_turn_seat = 0
+        engine.target_rank = "Q"
+        engine.step(CandidateAction("custom", "PLAY", ("Q",)))
+        engine.step(CandidateAction("custom", "PLAY", ("K",)))
+        self.assertEqual(engine.current_turn_seat, 2)
+        self.assertFalse(engine._must_force_challenge(0))
+        self.assertEqual(engine.get_legal_actions(0), ())
+        # 即使错误地选中了空手座位，也不能为它提供质疑动作。
+        engine.current_turn_seat = 0
+        self.assertEqual(engine.get_legal_actions(), ())
+        step_before = engine.step_id
+        shots_before = list(engine.shots_taken)
+        with self.assertRaisesRegex(RuntimeError, "no legal actions"):
+            engine.step("CHALLENGE")
+        self.assertEqual(engine.step_id, step_before)
+        self.assertEqual(engine.shots_taken, shots_before)
+
+    def test_empty_player_is_skipped_until_next_round(self) -> None:
+        engine = LiarsBarEngine(game_seed=10)
+        engine.hands = [["Q"], ["K", "K"], ["A", "A"], ["Q", "Q"]]
+        engine.fatal_chamber_slot = [6, 6, 6, 6]
+        engine.current_turn_seat = 0
+        engine.target_rank = "Q"
+        for seat, card in ((0, "Q"), (1, "K"), (2, "A"), (3, "Q"), (1, "K"), (2, "A")):
+            self.assertEqual(engine.current_turn_seat, seat)
+            engine.step(CandidateAction("custom", "PLAY", (card,)))
+            self.assertNotEqual(engine.current_turn_seat, 0)
+            self.assertEqual(engine.get_legal_actions(0), ())
+        self.assertEqual(engine.current_turn_seat, 3)
+        self.assertEqual([a.action_type for a in engine.get_legal_actions()], ["CHALLENGE"])
+        resolution = engine.step("CHALLENGE")
+        self.assertTrue(resolution.forced_challenge)
+        self.assertEqual(resolution.claimer_seat, 2)
+        self.assertEqual(resolution.challenger_seat, 3)
+        self.assertEqual(resolution.penalized_seat, 2)
+        self.assertEqual(engine.shots_taken[0], 0)
+        self.assertEqual(engine.round_id, 2)
+        self.assertEqual(len(engine.hands[0]), 5)
+
+
 if __name__ == "__main__":
     unittest.main()
