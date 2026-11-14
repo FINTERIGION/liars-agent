@@ -4,6 +4,8 @@
 
 当前已实现真实模型调用路径，并完成本地功能验证。**真实 SFT/RS 训练和 Qwen 对局实验尚未运行**；本地验证输出是规则策略与小型分类器的结果。原仓库的模拟模型输出保存在 [历史示例](examples/README.md)，不作为实验结论。
 
+完整准备好的数据已作为本仓库的 [selfplay-v3-20261114 Release](https://github.com/FINTERIGION/liars-agent/releases/tag/selfplay-v3-20261114) 附件提供：训练／验证／测试共 20,000 条，另有 148 条独立残局检查观测及真值、回放。压缩包约 50.5 MB；[下载、SHA-256 校验和使用说明](datasets/selfplay-v3-20261114/README.md)。Git clone 获取代码和校验清单，数据包需单独下载。
+
 ## 当前固定游戏规则（`liars_bar_research_v2`）
 
 1. **胜负：** 四人开始，死亡者淘汰，最后一名存活玩家获胜。打光手牌只退出当前小局行动，不代表整场胜利。
@@ -63,6 +65,8 @@ python -m liars_agent.ui.app --port 7860 \
 默认配置见 [实验配置](configs/sft_qwen35_9b_lora.yaml)，对手阵容见 [对手池配置](configs/opponent_pools.yaml)。同一输出目录绑定配置和方法版本（规则、观测、教师、决策协议及提示哈希）。旧版本、缺失版本或不一致的训练样本会在远程 preflight 之前被拒绝；更改方法或参数时使用新目录。旧目录保留用于历史查阅，不能继续训练。
 
 1. 生成数据与分类器，不调用 Tinker：
+
+   使用已发布数据时，按[下载说明](datasets/selfplay-v3-20261114/README.md)解压并校验即可，跳过此生成步骤；后续始终使用数据包内的 `config.json` 与对应目录。
 
    ```bash
    python scripts/run_full_pipeline.py --stage data \
