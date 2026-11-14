@@ -660,14 +660,20 @@ def evaluate_frozen_beliefs(config, output, backend, model_keys):
 
 def evaluate_endgames(config: dict, output: Path, backend, model_keys: list[str], *, required=False) -> dict:
     from liars_agent.evaluation.endgame_model import evaluate_endgame_models
-    from liars_agent.evaluation.endgame_coverage import validate_endgame_coverage
+    from liars_agent.evaluation.endgame_coverage import validate_endgame_coverage, _validate_endgame_coverage
+    from liars_agent.training.dataset_release import validate_dataset_release
+    release = validate_dataset_release(output)
     directory = endgame_directory(config, output)
     if not (directory / "coverage_report.json").exists():
         if required:
             raise ValueError(f"Independent endgame check set is missing: {directory}")
         return {"status": "not_available", "path": str(directory)}
-    source_run = read_json(directory / "private/generation_metadata.json")["source_run"]
-    coverage = validate_endgame_coverage(directory, source_run)
+    if release is not None:
+        identity = release["source_identity"]
+        coverage = _validate_endgame_coverage(directory, (set(identity["game_ids"]), set(identity["game_seeds"])))
+    else:
+        source_run = read_json(directory / "private/generation_metadata.json")["source_run"]
+        coverage = validate_endgame_coverage(directory, source_run)
     if coverage["status"] != "complete":
         raise ValueError("Independent endgame coverage has unfilled reachable cells.")
     results = {}
@@ -804,6 +810,8 @@ def generate_figures(output: Path) -> list[str]:
 def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | None = None) -> None:
     """Validate existing contracts and both task schemas before paid preflight."""
     from liars_agent.training.tinker_train import validate_training_sample
+    from liars_agent.training.dataset_release import validate_dataset_release
+    release = validate_dataset_release(output)
     paths = [output / "dataset/data_summary.json", output / "dataset/rs_summary.json", output / "experiment_summary.json"]
     paths.extend((output / "evaluation").glob("*.json"))
     paths.extend((output / "models").glob("*/adapter_metadata.json"))
@@ -842,6 +850,11 @@ def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | No
         path = output / "dataset/rs_train.jsonl"
         if path.exists() and any(r["game_id"] in owner for r in read_jsonl(path)):
             raise ValueError("RS must use fresh training-side games.")
+    if release is not None:
+        # The pinned input hashes bind the audited augmentation/refinement to
+        # this release. Sample/partition checks above still run after relocation;
+        # only provenance checks needing historical absolute source paths stop here.
+        return
     snapshot = output / "config.json"
     dataset_config = read_json(snapshot).get("dataset", {}) if snapshot.exists() else {}
     if dataset_config.get("endgame_augmentation"):
