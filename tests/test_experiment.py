@@ -133,9 +133,10 @@ class TestExperimentIntegration(unittest.TestCase):
             def select_action(self, obs):
                 counts['select'] += 1
                 return super().select_action(obs)
-            def sample_candidates(self, obs, num_samples, include_belief=True):
+            def sample_candidates(self, obs, num_samples, include_belief=True, temperature=None):
                 self.assert_not_used = include_belief
                 counts['sample'] += 1
+                counts['temperature'] = temperature
                 bad = AgentDecisionRecord(was_fallback=True, rationale='INVALID_FALLBACK')
                 valid = AgentDecisionRecord(belief_bluff_prob=.314, rationale='UNVERIFIED_RATIONALE')
                 return [(obs.legal_actions[-1], bad)] + [(action, valid) for action in obs.legal_actions[:2]]
@@ -144,9 +145,11 @@ class TestExperimentIntegration(unittest.TestCase):
             with patch.object(experiment, 'llm_factory', return_value=lambda seed: TestAgent(name='test_model', seed=seed)):
                 summary = experiment.generate_rs_data(config, output, None)
                 self.assertEqual((summary['actual_samples'], summary['actual_belief_samples']), (2, 2))
+                self.assertEqual(counts['temperature'], 0.7)
                 rows = list(experiment.read_jsonl(output / 'dataset/rs_train.jsonl'))
                 actions = [r for r in rows if r['task'] == 'action']
                 self.assertTrue(all(set(json.loads(r['completion'])) == {'chosen_action_id'} for r in actions))
+                self.assertTrue(all('action_supervision' in r for r in actions))
                 self.assertTrue(all(r['completion'] in ('0', '1') for r in rows if r['task'] == 'belief'))
                 for replay_path in (output / 'dataset/rs_games').glob('*.replay.jsonl'):
                     replay = next(experiment.read_jsonl(replay_path))

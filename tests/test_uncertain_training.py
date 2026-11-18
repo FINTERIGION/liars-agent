@@ -348,6 +348,37 @@ class TestUncertainTraining(unittest.TestCase):
         self.assertEqual(result["training_metrics"], reference["training_metrics"])
         self.assertEqual(result["best_epoch"], 1)
 
+    def test_intra_epoch_step_checkpoint_and_resume_reproduces_metrics(self):
+        splits = self.splits()
+        splits["train"] += [self.action("train", "clear", "clear"),
+                            self.action("train", "small_gap", "small"),
+                            self.belief("train", "extra")]
+        uninterrupted, reference_service = self.new_backend("reference_step")
+        reference = run_tinker_lora_sft([], self.path / "reference_step_model", backend=uninterrupted,
+                            splits=splits, num_epochs=2, batch_size=2, seed=23, warmup_ratio=.5)
+        # 3 steps per epoch; save intra-epoch checkpoint every 2 steps and fail after step 2.
+        self.service.training.fail_after_train_calls = 2
+        with self.assertRaisesRegex(RuntimeError, "interrupted"):
+            run_tinker_lora_sft([], self.path / "resumed_step", backend=self.backend,
+                                splits=splits, num_epochs=2, batch_size=2, seed=23, warmup_ratio=.5,
+                                checkpoint_every_steps=2)
+        progress = json.loads((self.path / "resumed_step/training_progress.json").read_text())
+        self.assertEqual(progress["next_epoch"], 0)
+        self.assertEqual(progress["next_local_step"], 2)
+        self.assertEqual(progress["resume_state_path"], "tinker://run/weights/sft-step-2")
+        self.service.training.fail_after_train_calls = None
+        result = run_tinker_lora_sft([], self.path / "resumed_step", backend=self.backend,
+                                    splits=splits, num_epochs=2, batch_size=2, seed=23, resume=True,
+                                    warmup_ratio=.5, checkpoint_every_steps=2)
+        self.assertEqual(self.service.resumed, [("tinker://run/weights/sft-step-2", True)])
+        expected = [[(d.model_input.tokens, d.loss_fn_inputs) for d in batch]
+                    for batch in reference_service.training.batches]
+        actual = [[(d.model_input.tokens, d.loss_fn_inputs) for d in batch]
+                  for batch in self.service.training.batches]
+        self.assertEqual(actual, expected)
+        self.assertEqual(self.service.training.learning_rates, reference_service.training.learning_rates)
+        self.assertEqual(result["training_metrics"], reference["training_metrics"])
+
     def test_missing_old_objective_is_rejected_before_preflight(self):
         metadata = {"contract": current_contract(), "base_model": self.backend.base_model,
                     "state_path": "tinker://old/weights/sft"}

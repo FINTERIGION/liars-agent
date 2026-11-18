@@ -465,6 +465,7 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
         batch_size=training["batch_size"], max_seq_length=training["max_seq_length"],
         seed=training.get("seed", config["seed"]), resume_from=resume_from, resume_metadata=resume_metadata, stage=stage,
         resume=(path.parent / "training_progress.json").exists(),
+        checkpoint_every_steps=training.get("checkpoint_every_steps"),
         train_attn=config["lora"]["train_attn"], train_mlp=config["lora"]["train_mlp"],
         train_unembed=config["lora"]["train_unembed"],
         action_supervision_policy=policy,
@@ -486,9 +487,12 @@ def llm_factory(config: dict, output: Path, backend, key: str):
 
 def generate_rs_data(config: dict, output: Path, backend) -> dict:
     from liars_agent.training.data_generator import evaluate_observation_action_values, make_action_sample, extract_belief_samples
+    from liars_agent.training.action_supervision import make_action_supervision, normalize_action_policy
     from liars_agent.engine.observation import PlayerObservation
     from liars_agent.engine.replay import verify_replay_determinism
     rs = config["rs"]
+    policy = normalize_action_policy(config["training"].get("action_supervision"))
+    candidate_temp = float(rs.get("candidate_temperature", max(0.7, float(config["sampling"]["temperature"]))))
     shard_dir = output / "dataset/rs_games"
     shard_dir.mkdir(parents=True, exist_ok=True)
     accepted, beliefs = [], []
@@ -531,6 +535,11 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
             verify_replay_determinism(bundle, raise_on_error=True)
             save_replays_jsonl([bundle], replay_path)
             replay = bundle.to_dict()
+        points_cache_path = shard.with_suffix(".points_cache.jsonl")
+        cached_points = {}
+        if points_cache_path.exists():
+            for entry in read_jsonl(points_cache_path):
+                cached_points[(entry["round_id"], entry["step_id"])] = entry
         belief_rows = extract_belief_samples([replay], min(belief_target - len(beliefs),
             math.ceil(belief_target / rs["num_games"])), _derive_seed(config["seed"], "rs_belief", index), actor)
         points = [p for p in replay["steps"] if p["actor_seat"] == actor and len(p["observation"]["legal_actions"]) > 1]
@@ -541,20 +550,43 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
             if len(samples) >= quota:
                 break
             obs = PlayerObservation.from_dict(point["observation"])
-            proposals = agent.sample_candidates(obs, num_samples=rs["candidates_per_state"], include_belief=False)
+            point_key = (obs.round_id, obs.step_id)
+            if point_key in cached_points:
+                cached_entry = cached_points[point_key]
+                if cached_entry.get("accepted") and cached_entry.get("sample") is not None:
+                    sample = cached_entry["sample"]
+                    require_contract(sample, "RS sample")
+                    samples.append(sample)
+                continue
+            try:
+                proposals = agent.sample_candidates(obs, num_samples=rs["candidates_per_state"],
+                                                    include_belief=False, temperature=candidate_temp)
+            except TypeError:
+                proposals = agent.sample_candidates(obs, num_samples=rs["candidates_per_state"], include_belief=False)
             candidates = {a.action_id: a for a, record in proposals if not record.was_fallback}
             if len(candidates) < 2:
+                cached_points[point_key] = {"round_id": obs.round_id, "step_id": obs.step_id, "accepted": False}
+                write_jsonl(points_cache_path, cached_points.values())
                 continue
             values = evaluate_observation_action_values(obs, teacher_config(config), rs["rollouts_per_candidate"],
                 _derive_seed(config["seed"], "rs_teacher", index, obs.round_id, obs.step_id), list(candidates.values()))
             best = max(candidates.values(), key=lambda a: (values[a.action_id], a.action_type, a.cards))
             advantage = values[best.action_id] - sum(values.values()) / len(values)
             if advantage < rs["min_advantage_margin"]:
+                cached_points[point_key] = {"round_id": obs.round_id, "step_id": obs.step_id, "accepted": False}
+                write_jsonl(points_cache_path, cached_points.values())
                 continue
-            samples.append(make_action_sample(obs, best, game_id, rollout_advantage=advantage,
+            sample = make_action_sample(obs, best, game_id, rollout_advantage=advantage,
                 rollout_best_value=values[best.action_id], candidate_count=len(values), source="sft_rejection_sampling",
-                teacher="pool_prior_counter_continuation", rollout_candidate_values=values))
+                teacher="pool_prior_counter_continuation", rollout_candidate_values=values)
+            sample["action_supervision"] = make_action_supervision(sample, values, policy,
+                                                                   source="sft_rejection_sampling")
+            cached_points[point_key] = {"round_id": obs.round_id, "step_id": obs.step_id, "accepted": True, "sample": sample}
+            write_jsonl(points_cache_path, cached_points.values())
+            samples.append(sample)
         write_jsonl(shard, samples + belief_rows)
+        if points_cache_path.exists():
+            points_cache_path.unlink()
         accepted.extend(samples)
         beliefs.extend(belief_rows)
         print(f"RS data: action {len(accepted)}/{target}, belief {len(beliefs)}/{belief_target}", flush=True)
@@ -636,12 +668,26 @@ def evaluate_frozen_beliefs(config, output, backend, model_keys):
                 agent = None
             else:
                 agent = llm_factory(config, output, backend, key)(_derive_seed(config["seed"], "belief_eval"))
+            partial_path = output / f"evaluation/belief_{pool}_{key}.partial.jsonl"
+            cached_records = {}
+            if partial_path.exists():
+                for rec in read_jsonl(partial_path):
+                    cached_records[rec["sample_id"]] = rec
             records = []
             for row in rows:
+                if row["sample_id"] in cached_records:
+                    records.append(cached_records[row["sample_id"]])
+                    continue
                 obs = PlayerObservation.from_dict(row["observation"])
                 probability = estimate_heuristic_bluff_belief(obs)[0] if agent is None else agent.predict_bluff_prob(obs)
-                records.append({"sample_id": row["sample_id"], "game_id": row["game_id"],
-                    "label": row["label"], "probability": probability})
+                rec = {"sample_id": row["sample_id"], "game_id": row["game_id"],
+                       "label": row["label"], "probability": probability}
+                records.append(rec)
+                cached_records[row["sample_id"]] = rec
+                if agent is not None and hasattr(agent, "checkpoint"):
+                    write_jsonl(partial_path, cached_records.values())
+            if partial_path.exists():
+                partial_path.unlink()
             metrics = compute_probability_calibration([r["probability"] for r in records], [r["label"] for r in records])
             metadata = {"model_key": key, "base_model": config["base_model"] if agent is not None and hasattr(agent, "checkpoint") else None,
                 "checkpoint": getattr(agent, "checkpoint", None),
@@ -725,7 +771,8 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
             result = run_duplicate_evaluation(factory, opponent_factories(config, pool),
                 num_blocks=config["evaluation"]["num_blocks"], base_seed=config["seed"] + (1000 if pool == "seen" else 5000),
                 pool_name=f"{pool}_pool", model_metadata=metadata, opponent_specs=opponent_specs(config, pool),
-                num_resamples=config["evaluation"]["bootstrap_samples"], bootstrap_seed=config["seed"])
+                num_resamples=config["evaluation"]["bootstrap_samples"], bootstrap_seed=config["seed"],
+                cache_dir=output / f"evaluation/blocks/{pool}_{key}_full")
             data = result.to_dict(include_replays=False)
             data["contract"] = current_contract()
             replay_dicts = [r.to_dict() for r in result.replays]
@@ -759,7 +806,8 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
                         base_seed=config["seed"] + 1000, pool_name="seen_pool", ablation_mode=mode,
                         model_metadata=results["seen"]["lora_sft"]["model_metadata"],
                         opponent_specs=opponent_specs(config), num_resamples=config["evaluation"]["bootstrap_samples"],
-                        bootstrap_seed=config["seed"])
+                        bootstrap_seed=config["seed"],
+                        cache_dir=output / f"evaluation/blocks/ablation_{mode}")
                     data = result.to_dict(include_replays=False)
                     data["contract"] = current_contract()
                     data["profile"] = compute_behavioral_profile([r.to_dict() for r in result.replays], "lora_sft")
@@ -830,7 +878,8 @@ def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | No
         require_contract(read_json(classifier), "classifier weights")
     sample_paths = list((output / "dataset").glob("*.jsonl"))
     sample_paths.extend((output / "dataset/batches").glob("samples_*.jsonl"))
-    sample_paths.extend(p for p in (output / "dataset/rs_games").glob("game_*.jsonl") if not p.name.endswith(".replay.jsonl"))
+    sample_paths.extend(p for p in (output / "dataset/rs_games").glob("game_*.jsonl")
+                        if not p.name.endswith(".replay.jsonl") and not p.name.endswith(".points_cache.jsonl"))
     for path in sample_paths:
         for row in read_jsonl(path):
             validate_training_sample(row, action_supervision_policy=action_supervision_policy)
@@ -888,7 +937,7 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
         raise ValueError(f"Unknown model; choose from {list(MODEL_LABELS)}")
     if stage == "local" and set(model_keys) - {"small_classifier", "rule_counter"}:
         raise ValueError("The local stage only supports small_classifier and rule_counter; it never calls Tinker.")
-    sequence = ["data", "sft", "rs", "evaluate", "figures"] if stage == "all" else (["data", "evaluate", "figures"] if stage == "local" else [stage])
+    sequence = ["data", "sft_trial", "sft", "rs", "evaluate", "figures"] if stage == "all" else (["data", "evaluate", "figures"] if stage == "local" else [stage])
     backend = None
     status_path = output / "run_status.json"
     status = read_json(status_path) if status_path.exists() else {"stages": {}, "real_experiments": "pending"}
@@ -913,7 +962,8 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
             elif current == "sft":
                 train_model(config, output, backend)
             elif current == "sft_trial":
-                train_model(config, output, backend, "sft_trial", max_train_steps=max_train_steps)
+                trial_steps = max_train_steps if max_train_steps is not None else 5
+                train_model(config, output, backend, "sft_trial", max_train_steps=trial_steps)
             elif current == "rs":
                 if not (output / "dataset/rs_train.jsonl").exists():
                     generate_rs_data(config, output, backend)

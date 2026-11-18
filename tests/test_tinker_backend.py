@@ -351,6 +351,11 @@ class TestTinkerContracts(unittest.TestCase):
         reloaded = BudgetLedger(self.path / "budget.jsonl", limit_usd=1)
         self.assertEqual(reloaded.snapshot()["pending_requests"], 1)
         self.assertGreater(reloaded.snapshot()["reserved_unknown_usd"], 0)
+        self.assertEqual(reloaded.release_pending(reason="test_reconcile"), 1)
+        self.assertEqual(reloaded.snapshot()["pending_requests"], 0)
+        self.assertEqual(reloaded.snapshot()["reserved_unknown_usd"], 0)
+        reloaded_again = BudgetLedger(self.path / "budget.jsonl", limit_usd=1)
+        self.assertEqual(reloaded_again.snapshot()["pending_requests"], 0)
 
     def test_invalid_action_retains_independent_model_belief_and_fallback_record(self):
         agent = LLMAgent(backend=self.backend, seed=9)

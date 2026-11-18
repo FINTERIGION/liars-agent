@@ -95,6 +95,15 @@ class EvaluationTests(unittest.TestCase):
         decisions = exported["decision_metrics"]["total_decisions"]
         self.assertEqual(exported["decision_metrics"]["completion_tokens"], decisions * 3)
         self.assertEqual(exported["decision_metrics"]["belief_completion_tokens_upper_bound"], decisions * 7)
+        with tempfile.TemporaryDirectory() as cache_tmp:
+            cache_dir = Path(cache_tmp) / "blocks"
+            cached_first = run_duplicate_evaluation(**kwargs, pool_name="main", ablation_mode="full", cache_dir=cache_dir)
+            self.assertEqual(cached_first.to_dict(), full.to_dict())
+            def fail_factory(seed):
+                raise AssertionError("Cached block should not re-instantiate candidate agent")
+            cached_second = run_duplicate_evaluation(**{**kwargs, "candidate_factory": fail_factory},
+                                                     pool_name="main", ablation_mode="full", cache_dir=cache_dir)
+            self.assertEqual(cached_second.to_dict(), full.to_dict())
 
     def test_pairing_rejects_different_experiment_conditions(self):
         original = blocks([0.5, 0.25])

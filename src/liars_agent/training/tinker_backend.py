@@ -62,6 +62,8 @@ class BudgetLedger:
             self._spent += event["estimated_cost_usd"]
             for key in self._usage:
                 self._usage[key] += int(event.get("usage", {}).get(key, 0))
+        elif event["event"] == "release":
+            self._pending.pop(event["request_id"], None)
 
     @contextmanager
     def _transaction(self):
@@ -109,6 +111,18 @@ class BudgetLedger:
             self._append(stream, {"event": "complete", "request_id": request_id,
                           "estimated_cost_usd": estimated_cost_usd, "usage": usage,
                           "usage_basis": usage_basis, "time": time.time()})
+
+    def release_pending(self, request_id: str | None = None, *, reason: str = "manual_reconciliation") -> int:
+        """Explicitly release one or all abandoned reservations after crash/timeout reconciliation."""
+        with self._transaction() as stream:
+            targets = [request_id] if request_id is not None else list(self._pending)
+            released = 0
+            for rid in targets:
+                if rid in self._pending:
+                    self._append(stream, {"event": "release", "request_id": rid,
+                                  "reason": reason, "time": time.time()})
+                    released += 1
+            return released
 
     def snapshot(self) -> dict[str, Any]:
         with self._transaction():
@@ -262,7 +276,7 @@ class TinkerBackend:
                                 (time.perf_counter() - start) * 1000, total_cost)
 
     def sample(self, messages: list[dict[str, str]], *, checkpoint: str | None = None,
-               num_samples: int = 1, temperature: float = 0.2, top_p: float = 0.9,
+               num_samples: int = 1, temperature: float = 0.35, top_p: float = 0.9,
                max_tokens: int = 256, seed: int | None = None) -> list[SampleResult]:
         if num_samples < 1 or max_tokens < 1:
             raise ValueError("num_samples and max_tokens must be positive.")

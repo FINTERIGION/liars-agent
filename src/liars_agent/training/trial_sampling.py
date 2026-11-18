@@ -107,7 +107,7 @@ def _label_logprobs(result, data: list) -> list[float]:
 
 def verify_saved_sampler(
     backend, training_client, sampler_path: str, probes_by_task: dict, *,
-    max_seq_length: int, temperature: float = .2, top_p: float = .9,
+    max_seq_length: int, temperature: float = .35, top_p: float = .9,
     max_new_tokens: int = 256, seed: int = 42,
     logprob_atol: float = 1e-4, logprob_rtol: float = 1e-4,
 ) -> dict[str, Any]:

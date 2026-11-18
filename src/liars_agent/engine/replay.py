@@ -57,6 +57,23 @@ class GameReplayBundle:
         return data
 
     @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> GameReplayBundle:
+        return cls(
+            game_id=data["game_id"],
+            game_seed=int(data["game_seed"]),
+            seat_agent_names=list(data["seat_agent_names"]),
+            winner_seat=int(data["winner_seat"]),
+            total_rounds=int(data["total_rounds"]),
+            total_steps=int(data["total_steps"]),
+            final_shots_taken=list(data["final_shots_taken"]),
+            fatal_chamber_slots=list(data["fatal_chamber_slots"]),
+            steps=list(data["steps"]),
+            rounds_summary=list(data["rounds_summary"]),
+            rules_version=data.get("rules_version", RULES_VERSION),
+            observation_version=data.get("observation_version", OBSERVATION_VERSION),
+        )
+
+    @classmethod
     def from_engine(cls, engine: LiarsBarEngine,
                     seat_agent_names: Optional[list[str]] = None) -> GameReplayBundle:
         if not engine.is_game_over() or engine.winner_seat is None:

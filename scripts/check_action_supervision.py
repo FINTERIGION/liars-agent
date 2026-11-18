@@ -41,8 +41,13 @@ def as_list(value):
 def check_action_supervision(run_dir: Path, *, cost_estimate: Path | None = None) -> dict:
     started = time.monotonic()
     run_dir = run_dir.resolve()
+    from liars_agent.training.dataset_release import validate_dataset_release
+    release = validate_dataset_release(run_dir)
     config = read_json(run_dir / "config.json")
-    if config["dataset"].get("endgame_augmentation"):
+    if release is not None:
+        source_check = {"status": "passed", "release_id": release["release_id"],
+                        "verified_files": len(release["files"]), "portable_release": True}
+    elif config["dataset"].get("endgame_augmentation"):
         from liars_agent.training.endgame_augmentation import validate_endgame_augmented_run
         source_check = validate_endgame_augmented_run(run_dir, check_sources=True)
     else:

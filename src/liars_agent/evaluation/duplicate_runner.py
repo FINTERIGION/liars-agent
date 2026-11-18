@@ -10,12 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from copy import deepcopy
 import random
+from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from liars_agent.agents.base import BaseAgent
 from liars_agent.contracts import RULES_VERSION
 from liars_agent.engine.observation import apply_history_ablation
-from liars_agent.engine.replay import GameReplayBundle
+from liars_agent.engine.replay import GameReplayBundle, save_replays_jsonl
 from liars_agent.engine.state import LiarsBarEngine, _derive_seed
 from liars_agent.engine.types import AblationMode
 from liars_agent.evaluation.metrics import compute_block_bootstrap_ci
@@ -70,6 +71,7 @@ def run_duplicate_evaluation(
     opponent_specs: list[dict[str, Any]] | None = None,
     num_resamples: int = 10000,
     bootstrap_seed: int = 42,
+    cache_dir: str | Path | None = None,
 ) -> DuplicateEvalResult:
     """执行座位轮换配对评测.
 
@@ -106,6 +108,9 @@ def run_duplicate_evaluation(
     block_records: list[dict[str, Any]] = []
     candidate_records: list[dict[str, Any]] = []
     metadata = dict(model_metadata or {})
+    block_cache_root = Path(cache_dir) if cache_dir is not None else None
+    if block_cache_root is not None:
+        block_cache_root.mkdir(parents=True, exist_ok=True)
 
     for b_idx in range(num_blocks):
         block_seed = _derive_seed(base_seed, "eval_block", b_idx)
@@ -114,6 +119,40 @@ def run_duplicate_evaluation(
         games: list[dict[str, Any]] = []
         opponent_order = [0, 1, 2]
         random.Random(_derive_seed(block_seed, "opponent_order")).shuffle(opponent_order)
+
+        if block_cache_root is not None:
+            block_json_path = block_cache_root / f"block_{b_idx:04d}.json"
+            block_replay_path = block_cache_root / f"block_{b_idx:04d}.replays.jsonl"
+            if block_json_path.exists() and block_replay_path.exists():
+                import json
+                from liars_agent.engine.replay import verify_replay_determinism
+                cached_block = json.loads(block_json_path.read_text(encoding="utf-8"))
+                record = cached_block.get("block_record", {})
+                if (cached_block.get("ablation_mode") == ablation_mode
+                        and cached_block.get("model_metadata") == metadata
+                        and record.get("block_id") == block_id
+                        and record.get("block_seed") == block_seed
+                        and record.get("opponent_specs") == opponent_specs
+                        and record.get("opponent_order") == opponent_order
+                        and record.get("rules_version") == RULES_VERSION):
+                    cached_replays = [
+                        GameReplayBundle.from_dict(json.loads(line))
+                        for line in block_replay_path.read_text(encoding="utf-8").splitlines()
+                        if line.strip()
+                    ]
+                    if len(cached_replays) == 4 and all(verify_replay_determinism(r) for r in cached_replays):
+                        candidate_name = cached_block["candidate_name"]
+                        block_win_rates.append(float(record["win_rate"]))
+                        block_records.append(record)
+                        for game in record["games"]:
+                            if game["won"]:
+                                seat_wins[int(game["candidate_seat"])] += 1
+                        candidate_records.extend(cached_block.get("candidate_records", []))
+                        replays.extend(cached_replays)
+                        continue
+
+        block_replays: list[GameReplayBundle] = []
+        block_candidate_records: list[dict[str, Any]] = []
 
         for cand_seat in range(4):
             # Experiment labels must not perturb agents' random streams.
@@ -142,7 +181,9 @@ def run_duplicate_evaluation(
                 if turn == cand_seat:
                     # The replay should record what the agent actually received.
                     engine.step_truth_logs[-1].observation = obs.to_dict()
-                    candidate_records.append(rec.to_dict())
+                    rec_dict = rec.to_dict()
+                    candidate_records.append(rec_dict)
+                    block_candidate_records.append(rec_dict)
 
             if engine.winner_seat == cand_seat:
                 wins_in_block += 1
@@ -155,14 +196,14 @@ def run_duplicate_evaluation(
                 "won": engine.winner_seat == cand_seat,
             })
 
-            replays.append(
-                GameReplayBundle.from_engine(
-                    engine, seat_agent_names=[a.name for a in lineup]
-                )
+            bundle = GameReplayBundle.from_engine(
+                engine, seat_agent_names=[a.name for a in lineup]
             )
+            replays.append(bundle)
+            block_replays.append(bundle)
 
         block_win_rates.append(wins_in_block / 4.0)
-        block_records.append({
+        block_record = {
             "block_id": block_id,
             "block_seed": block_seed,
             "win_rate": wins_in_block / 4.0,
@@ -170,7 +211,28 @@ def run_duplicate_evaluation(
             "opponent_order": opponent_order,
             "rules_version": RULES_VERSION,
             "games": games,
-        })
+        }
+        block_records.append(block_record)
+        if block_cache_root is not None:
+            import json
+            save_replays_jsonl(block_replays, block_cache_root / f"block_{b_idx:04d}.replays.jsonl")
+            tmp_path = block_cache_root / f"block_{b_idx:04d}.json.tmp"
+            tmp_path.write_text(
+                json.dumps(
+                    {
+                        "candidate_name": candidate_name,
+                        "ablation_mode": ablation_mode,
+                        "model_metadata": metadata,
+                        "block_record": block_record,
+                        "candidate_records": block_candidate_records,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            tmp_path.replace(block_cache_root / f"block_{b_idx:04d}.json")
 
     total_games = num_blocks * 4
     overall_wr = sum(block_win_rates) / num_blocks

@@ -225,6 +225,7 @@ def run_tinker_lora_sft(
     max_seq_length: int = 16384, warmup_ratio: float = .05,
     resume_from: str | None = None, resume_metadata: dict[str, Any] | None = None,
     resume: bool = False, stage: str = "sft", checkpoint_ttl_seconds: int | None = None,
+    checkpoint_every_steps: int | None = None,
     train_attn: bool = True, train_mlp: bool = True, train_unembed: bool = False,
     action_supervision_policy: dict | None = None,
     diagnostic_steps: list[int] | tuple[int, ...] = (50, 100),
@@ -244,6 +245,8 @@ def run_tinker_lora_sft(
         raise ValueError("Use positive epochs/rank/rate and an even batch_size of at least 2.")
     if not 0 <= warmup_ratio < 1:
         raise ValueError("warmup_ratio must be in [0, 1).")
+    if checkpoint_every_steps is not None and (type(checkpoint_every_steps) is not int or checkpoint_every_steps < 1):
+        raise ValueError("checkpoint_every_steps must be a positive integer or None.")
     policy = normalize_action_policy(action_supervision_policy)
     lora_config = {"r": lora_rank, "train_mlp": train_mlp,
                    "train_attn": train_attn, "train_unembed": train_unembed}
@@ -274,7 +277,7 @@ def run_tinker_lora_sft(
                                    num_epochs, batch_size, diagnostic_steps, max_train_steps)
     from liars_agent.training.trial_verification import normalize_trial_verification_config
     verification_config = normalize_trial_verification_config(trial_verification_config)
-    sampling_config = {"temperature": .2, "top_p": .9, "max_new_tokens": 256,
+    sampling_config = {"temperature": .35, "top_p": .9, "max_new_tokens": 256,
                        **(trial_sampling_config or {})}
     diagnostic_rows = select_diagnostic_rows(splits, seed, diagnostic_samples_per_task)
     fingerprint = hashlib.sha256(json.dumps(splits, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
@@ -308,7 +311,9 @@ def run_tinker_lora_sft(
         require_training_objective(progress, policy)
         if progress["dataset_sha256"] != fingerprint:
             raise ValueError("Cannot resume with a changed dataset.")
-        if progress.get("config") != config:
+        saved_config = dict(progress.get("config") or {})
+        saved_config.pop("checkpoint_every_steps", None)
+        if saved_config != config:
             raise ValueError("Cannot resume with changed training configuration.")
     elif progress_path.exists():
         raise ValueError("Training output already has progress; use resume=True or a new output directory.")
@@ -317,6 +322,8 @@ def run_tinker_lora_sft(
         raise ValueError("Training model and backend model differ.")
 
     start_epoch = int(progress.get("next_epoch", 0))
+    start_local_step = int(progress.get("next_local_step", 0))
+    partial_state = progress.get("partial_epoch_state") if start_local_step > 0 else None
     # Keep original states as the sampling unit. All answers of a selected state
     # enter the same optimizer step and collectively retain that state's weight.
     action_data = []
@@ -373,12 +380,15 @@ def run_tinker_lora_sft(
     loss_curve = progress.get("loss_curve", [])
     best = progress.get("best", {})
     diagnostics = progress.get("diagnostics", [])
+    step_checkpoints = list(progress.get("step_checkpoints", []))
     subset = {"seed": seed, "source_split": "val", "samples_per_task": diagnostic_samples_per_task,
               "sample_ids": {task: [row["sample_id"] for row in rows] for task, rows in diagnostic_rows.items()}}
-    completed_steps = start_epoch * steps_per_epoch
+    completed_steps = start_epoch * steps_per_epoch + start_local_step
     logical_visits = {task: sum(entry["training_logical_state_visits"][task] for entry in loss_curve)
+                      + (int(partial_state["logical_visits"][task]) if partial_state else 0)
                       for task in ("action", "belief")}
     expanded_sequences = {task: sum(entry["training_expanded_sequences"][task] for entry in loss_curve)
+                          + (int(partial_state["expanded_sequences"][task]) if partial_state else 0)
                           for task in ("action", "belief")}
     start_time = time.perf_counter()
     closure = {"contract": current_contract(), "version": verification_config["version"],
@@ -420,7 +430,7 @@ def run_tinker_lora_sft(
             "used_for_checkpoint_selection": False})
         _write_json(out / "training_diagnostics.json", {"subset": subset, "records": diagnostics})
 
-    if start_epoch == 0:
+    if start_epoch == 0 and start_local_step == 0:
         diagnose(0)
     if plan["is_trial"]:
         closure["phase"] = "training_and_diagnostics"
@@ -431,9 +441,16 @@ def run_tinker_lora_sft(
         for index, task in enumerate(("action", "belief")):
             orders[task] = list(range(len(train_data[task])))
             random.Random(seed + 2 * epoch + index).shuffle(orders[task])
-        totals = {task: [0.0, 0.0] for task in ("action", "belief")}
-        sequence_counts = {task: 0 for task in ("action", "belief")}
-        for local_step in range(steps_per_epoch):
+        if epoch == start_epoch and partial_state is not None:
+            totals = {task: [float(partial_state["totals"][task][0]), float(partial_state["totals"][task][1])]
+                      for task in ("action", "belief")}
+            sequence_counts = {task: int(partial_state["sequence_counts"][task]) for task in ("action", "belief")}
+            local_start = start_local_step
+        else:
+            totals = {task: [0.0, 0.0] for task in ("action", "belief")}
+            sequence_counts = {task: 0 for task in ("action", "belief")}
+            local_start = 0
+        for local_step in range(local_start, steps_per_epoch):
             selected = {task: [train_data[task][orders[task][(local_step * half + offset) % len(orders[task])]]
                               for offset in range(half)] for task in ("action", "belief")}
             task_batches = {"action": [datum for state in selected["action"] for datum in state],
@@ -455,6 +472,24 @@ def run_tinker_lora_sft(
                 start = stop
             completed_steps = step
             diagnose(step)
+            if (not plan["is_trial"] and checkpoint_every_steps is not None
+                    and step % checkpoint_every_steps == 0 and local_step + 1 < steps_per_epoch):
+                step_state = resolve_future(client.save_state(
+                    name=f"{stage}-step-{step}", ttl_seconds=checkpoint_ttl_seconds))
+                step_checkpoints.append({"epoch": epoch + 1, "step": step,
+                    "local_step": local_step + 1, "state_path": step_state.path})
+                _write_json(progress_path, {"contract": current_contract(), "dataset_sha256": fingerprint,
+                    "action_supervision_policy": policy, "config": config,
+                    "next_epoch": epoch, "next_local_step": local_step + 1,
+                    "resume_state_path": step_state.path,
+                    "partial_epoch_state": {
+                        "totals": totals,
+                        "sequence_counts": sequence_counts,
+                        "logical_visits": {task: (local_step + 1) * half for task in ("action", "belief")},
+                        "expanded_sequences": dict(sequence_counts),
+                    },
+                    "step_checkpoints": step_checkpoints,
+                    "best": best, "loss_curve": loss_curve, "diagnostics": diagnostics})
             if step == plan["planned_steps"]:
                 break
         if local_step + 1 < steps_per_epoch:
@@ -496,10 +531,13 @@ def run_tinker_lora_sft(
                     "metric": "val_action_set_nll",
                     "sampler_path": sampler.path, "state_path": state.path}
         if not plan["is_trial"]:
-            _write_json(progress_path, {"contract": current_contract(), "dataset_sha256": fingerprint,
+            progress_payload = {"contract": current_contract(), "dataset_sha256": fingerprint,
                 "action_supervision_policy": policy,
                 "config": config, "next_epoch": epoch + 1, "resume_state_path": state.path,
-                "best": best, "loss_curve": loss_curve, "diagnostics": diagnostics})
+                "best": best, "loss_curve": loss_curve, "diagnostics": diagnostics}
+            if step_checkpoints:
+                progress_payload["step_checkpoints"] = step_checkpoints
+            _write_json(progress_path, progress_payload)
         _write_json(out / "loss_curve.json", loss_curve)
         if completed_steps == plan["planned_steps"]:
             break

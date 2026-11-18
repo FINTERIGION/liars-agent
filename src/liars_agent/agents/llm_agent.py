@@ -65,7 +65,7 @@ class LLMAgent(BaseAgent):
     def __init__(self, name: str = "qwen35_9b_zero_shot", mode: ModelMode = "zero_shot",
                  model_version: str = "Qwen/Qwen3.5-9B", adapter_path: str | Path | None = None,
                  seed: int = 42, api_base_url: str | None = None, api_key: str | None = None,
-                 temperature: float = 0.2, *, backend: Any = None,
+                 temperature: float = 0.35, *, backend: Any = None,
                  max_new_tokens: int = 256, top_p: float = 0.9) -> None:
         if mode not in ("zero_shot", "lora_sft", "lora_rs_improved", "remote_api"):
             raise ValueError(f"Unknown model mode: {mode}")
@@ -164,17 +164,19 @@ class LLMAgent(BaseAgent):
             fallback_record=fallback.to_dict(), rationale=describe_action(obs, action), **common)
 
     def sample_candidates(self, obs: PlayerObservation, num_samples: int = 8, *,
-                          include_belief: bool = True) -> list[tuple[CandidateAction, AgentDecisionRecord]]:
+                          include_belief: bool = True,
+                          temperature: float | None = None) -> list[tuple[CandidateAction, AgentDecisionRecord]]:
         if not obs.legal_actions:
             raise ValueError("Cannot select an action without legal candidates.")
         if num_samples < 1:
             raise ValueError("num_samples must be positive.")
+        sample_temp = self.temperature if temperature is None else float(temperature)
         # One independent belief score is shared by this observation's candidates.
         belief = self._score_belief(obs) if include_belief else None
         results = self.backend.sample(
             [{"role": "system", "content": SYSTEM_PROMPT},
              {"role": "user", "content": build_user_prompt(obs)}],
-            checkpoint=self.checkpoint, num_samples=num_samples, temperature=self.temperature,
+            checkpoint=self.checkpoint, num_samples=num_samples, temperature=sample_temp,
             top_p=self.top_p, max_tokens=self.max_new_tokens, seed=self._sampling_seed(obs))
         self.tracker.api_calls += 1
         self.tracker.total_calls += len(results)

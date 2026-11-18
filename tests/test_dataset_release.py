@@ -185,6 +185,28 @@ class TestDatasetRelease(unittest.TestCase):
         frozen.assert_called_once_with(self.run / "endgame_coverage", ({"train", "val", "test"}, {11, 12, 13}))
         evaluate.assert_called_once()
 
+    def test_check_action_supervision_uses_pinned_release_instead_of_historical_source(self):
+        from scripts import check_action_supervision
+        from liars_agent.agents.prompt_builder import BELIEF_SYSTEM_PROMPT, build_bluff_user_prompt
+        from test_tinker_backend import SDK, Tokenizer
+        engine = LiarsBarEngine(game_seed=29)
+        engine.step(engine.get_legal_actions()[0])
+        obs = engine.get_observation()
+        for split in ("train", "val", "test"):
+            action = make_action_sample(obs, obs.legal_actions[0], split)
+            belief = {"task": "belief", "game_id": split, "sample_id": split + "_belief",
+                      "system": BELIEF_SYSTEM_PROMPT, "prompt": build_bluff_user_prompt(obs),
+                      "completion": "1", "label": 1, "observation": obs.to_dict(),
+                      "contract": current_contract()}
+            experiment.write_jsonl(self.run / f"dataset/{split}.jsonl", [action, belief])
+        self.pin()
+        with patch("liars_agent.training.endgame_augmentation.validate_endgame_augmented_run",
+                   side_effect=AssertionError("Historical source should not be read")), \
+                patch("transformers.AutoTokenizer.from_pretrained", return_value=Tokenizer()):
+            report = check_action_supervision.check_action_supervision(self.run)
+        self.assertEqual(report["status"], "passed")
+        self.assertTrue(report["source_check"]["portable_release"])
+
 
 if __name__ == "__main__":
     unittest.main()
