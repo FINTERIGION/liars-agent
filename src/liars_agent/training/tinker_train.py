@@ -13,9 +13,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from liars_agent.agents.prompt_builder import (SYSTEM_PROMPT, BELIEF_SYSTEM_PROMPT,
-    build_user_prompt, build_bluff_user_prompt, validate_action_decision)
-from liars_agent.contracts import current_contract, require_contract
+from liars_agent.agents.prompt_builder import (
+    action_prompt_for_method,
+    belief_prompt_for_method,
+    validate_action_decision,
+)
+from liars_agent.contracts import current_contract, require_contract, require_supported_contract
 from liars_agent.engine.observation import PlayerObservation
 from liars_agent.training.action_supervision import (
     action_target_completions, mean_action_weight, normalize_action_policy,
@@ -56,11 +59,16 @@ def _record_trial_failure(function):
 
 
 def validate_training_sample(sample: dict[str, Any], *,
-                             action_supervision_policy: dict | None = None) -> PlayerObservation:
+                             action_supervision_policy: dict | None = None,
+                             method_version: str | None = None) -> PlayerObservation:
     """Reject stale contracts or malformed supervision before any model API call."""
     if sample.get("historical_example"):
         raise ValueError("Historical examples cannot be used for training; regenerate data with current rules.")
-    require_contract(sample, "training sample")
+    if method_version is not None:
+        require_contract(sample, "training sample", method_version=method_version)
+        resolved_method = method_version
+    else:
+        resolved_method = require_supported_contract(sample, "training sample")
     obs = PlayerObservation.from_dict(sample["observation"])
     task = sample.get("task")
     if task == "action":
@@ -71,13 +79,13 @@ def validate_training_sample(sample: dict[str, Any], *,
             stored = sample["action_supervision"]
             stored_policy = stored.get("policy") if isinstance(stored, dict) else None
             resolve_action_supervision(sample, stored_policy)
-        expected_system, expected_prompt = SYSTEM_PROMPT, build_user_prompt(obs)
+        expected_system, expected_prompt = action_prompt_for_method(obs, resolved_method)
     elif task == "belief":
         if obs.last_claim is None or sample.get("completion") not in ("0", "1"):
             raise ValueError("Belief supervision requires a pending claim and the exact label 0 or 1.")
         if type(sample.get("label")) is not int or sample["label"] != int(sample["completion"]):
             raise ValueError("Belief label must be an integer matching its completion.")
-        expected_system, expected_prompt = BELIEF_SYSTEM_PROMPT, build_bluff_user_prompt(obs)
+        expected_system, expected_prompt = belief_prompt_for_method(obs, resolved_method)
     else:
         raise ValueError("Training sample task must be action or belief.")
     if sample.get("system") != expected_system or sample.get("prompt") != expected_prompt:
@@ -313,6 +321,7 @@ def run_tinker_lora_sft(
     diagnostic_steps: list[int] | tuple[int, ...] = (50, 100),
     diagnostic_samples_per_task: int = 64, max_train_steps: int | None = None,
     trial_verification_config: dict | None = None, trial_sampling_config: dict | None = None,
+    method_version: str = "v2",
 ) -> dict[str, Any]:
     """Use equal state counts per batch; cycle the shorter task within each epoch.
 
@@ -334,7 +343,7 @@ def run_tinker_lora_sft(
                    "train_attn": train_attn, "train_unembed": train_unembed}
     # Validate every provided row, including test rows, before constructing an API backend.
     if resume_from is not None:
-        require_contract(resume_metadata or {}, "source checkpoint metadata")
+        require_contract(resume_metadata or {}, "source checkpoint metadata", method_version=method_version)
         require_training_objective(resume_metadata or {}, policy)
         if resume_metadata.get("state_path") != resume_from or resume_metadata.get("base_model") != base_model:
             raise ValueError("Source checkpoint metadata does not match its state path/model.")
@@ -353,7 +362,7 @@ def run_tinker_lora_sft(
             games[split_name] = set()
             dataset_summary[split_name] = {"action": 0, "belief": 0}
             for row in _iter_jsonl(path):
-                validate_training_sample(row, action_supervision_policy=policy)
+                validate_training_sample(row, action_supervision_policy=policy, method_version=method_version)
                 games[split_name].add(row["game_id"])
                 task = row["task"]
                 dataset_summary[split_name][task] += 1
@@ -379,7 +388,7 @@ def run_tinker_lora_sft(
     else:
         all_rows = samples + [row for rows in (splits or {}).values() for row in rows]
         for row in all_rows:
-            validate_training_sample(row, action_supervision_policy=policy)
+            validate_training_sample(row, action_supervision_policy=policy, method_version=method_version)
         splits = splits if splits is not None else split_dataset_by_game_id(samples, train_ratio=.8, val_ratio=.1, seed=seed)
         grouped = {name: {task: [row for row in rows if row["task"] == task] for task in ("action", "belief")}
                    for name, rows in splits.items()}
@@ -432,7 +441,7 @@ def run_tinker_lora_sft(
         if not progress_path.exists():
             raise ValueError("No completed-epoch checkpoint exists in this output directory.")
         progress = json.loads(progress_path.read_text(encoding="utf-8"))
-        require_contract(progress, "training progress")
+        require_contract(progress, "training progress", method_version=method_version)
         require_training_objective(progress, policy)
         if progress["dataset_sha256"] != fingerprint:
             raise ValueError("Cannot resume with a changed dataset.")
@@ -529,7 +538,7 @@ def run_tinker_lora_sft(
                           + (int(partial_state["expanded_sequences"][task]) if partial_state else 0)
                           for task in ("action", "belief")}
     start_time = time.perf_counter()
-    closure = {"contract": current_contract(), "version": verification_config["version"],
+    closure = {"contract": current_contract(method_version), "version": verification_config["version"],
         "attempt_id": uuid.uuid4().hex,
         "status": "running", "config": verification_config, "sampling_config": sampling_config,
         "dataset_sha256": fingerprint, "base_model": base_model, "lora_config": lora_config,
@@ -623,7 +632,7 @@ def run_tinker_lora_sft(
                     name=f"{stage}-step-{step}", ttl_seconds=checkpoint_ttl_seconds))
                 step_checkpoints.append({"epoch": epoch + 1, "step": step,
                     "local_step": local_step + 1, "state_path": step_state.path})
-                _write_json(progress_path, {"contract": current_contract(), "dataset_sha256": fingerprint,
+                _write_json(progress_path, {"contract": current_contract(method_version), "dataset_sha256": fingerprint,
                     "action_supervision_policy": policy, "config": config,
                     "next_epoch": epoch, "next_local_step": local_step + 1,
                     "resume_state_path": step_state.path,
@@ -676,7 +685,7 @@ def run_tinker_lora_sft(
                     "metric": "val_action_set_nll",
                     "sampler_path": sampler.path, "state_path": state.path}
         if not plan["is_trial"]:
-            progress_payload = {"contract": current_contract(), "dataset_sha256": fingerprint,
+            progress_payload = {"contract": current_contract(method_version), "dataset_sha256": fingerprint,
                 "action_supervision_policy": policy,
                 "config": config, "next_epoch": epoch + 1, "resume_state_path": state.path,
                 "best": best, "loss_curve": loss_curve, "diagnostics": diagnostics}
@@ -736,7 +745,7 @@ def run_tinker_lora_sft(
                 closure["failed_check"] = exc.partial_report
             _write_json(closure_path, closure)
             raise
-    metadata = {"contract": current_contract(), "adapter_name": f"qwen35_9b_liars_lora_{stage}",
+    metadata = {"contract": current_contract(method_version), "adapter_name": f"qwen35_9b_liars_lora_{stage}",
         "base_model": base_model, "platform": "tinker", "backend": "tinker", "stage": stage,
         "action_supervision_policy": policy,
         "training_status": "trial_complete" if plan["is_trial"] else "complete",

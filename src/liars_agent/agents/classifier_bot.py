@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Optional, Tuple
 
 from liars_agent.agents.base import BaseAgent, split_play_actions, public_opponent_profile, describe_action
-from liars_agent.contracts import current_contract, require_contract
+from liars_agent.contracts import current_contract, require_contract, require_supported_contract
 from liars_agent.engine.observation import PlayerObservation
 from liars_agent.engine.types import (
     AgentDecisionRecord,
@@ -153,10 +153,13 @@ class SmallClassifierBot(BaseAgent):
 
         return self._fit_features(samples, learning_rate, epochs, l2_reg)
 
-    def fit_from_belief_samples(self, rows, learning_rate=.05, epochs=15, l2_reg=1e-3):
+    def fit_from_belief_samples(self, rows, learning_rate=.05, epochs=15, l2_reg=1e-3, *, method_version: str | None = None):
         samples = []
         for row in rows:
-            require_contract(row, "classifier belief sample")
+            if method_version is not None:
+                require_contract(row, "classifier belief sample", method_version=method_version)
+            else:
+                require_supported_contract(row, "classifier belief sample")
             if row.get("task") != "belief" or row.get("completion") not in ("0", "1"):
                 raise ValueError("Classifier requires true binary belief samples.")
             obs = PlayerObservation.from_dict(row["observation"])
@@ -223,13 +226,13 @@ class SmallClassifierBot(BaseAgent):
             rationale="[SmallClassifier] 无真牌可出，选择单张假牌降低被抓风险。",
         )
 
-    def save_weights(self, path: str | Path) -> None:
+    def save_weights(self, path: str | Path, *, method_version: str = "v2") -> None:
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
             json.dumps(
                 {
-                    "contract": current_contract(),
+                    "contract": current_contract(method_version),
                     "name": self.name,
                     "bluff_weights": self.bluff_weights,
                     "challenge_prob_cutoff": self.challenge_prob_cutoff,
@@ -240,10 +243,13 @@ class SmallClassifierBot(BaseAgent):
         )
 
     @classmethod
-    def load_weights(cls, path: str | Path, name: Optional[str] = None) -> SmallClassifierBot:
+    def load_weights(cls, path: str | Path, name: Optional[str] = None, *, method_version: str | None = None) -> SmallClassifierBot:
         """Load the same learned weights and decision threshold used in evaluation."""
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-        require_contract(data, "classifier weights")
+        if method_version is not None:
+            require_contract(data, "classifier weights", method_version=method_version)
+        else:
+            require_supported_contract(data, "classifier weights")
         weights = [float(value) for value in data["bluff_weights"]]
         if len(weights) != len(cls.DEFAULT_BLUFF_WEIGHTS) or not all(math.isfinite(w) for w in weights):
             raise ValueError("Classifier weights must contain 12 finite values.")

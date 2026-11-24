@@ -1,0 +1,81 @@
+experiment_name: qwen35_9b_liars_bar_adaptive_v4
+method_version: adaptive_v4
+base_model: Qwen/Qwen3.5-9B
+platform: tinker
+seed: 42
+opponent_config: opponent_pools_v4_adaptive.yaml
+budget_limit_usd: 5000
+
+dataset:
+  total_target_samples: 10000  # action examples (incl. history-critical prioritization)
+  belief_target_samples: 10000
+  num_games: 1000
+  max_games: 2000
+  workers: 8
+  batch_games: 20
+  rollout_trajectories_per_state: 16
+  min_advantage_margin: 0.05
+  history_critical_ratio: 0.5
+  counterfactual_train_pairs: 200
+  split_by: game_id
+  train_ratio: 0.8
+  val_ratio: 0.1
+  history_ablation_augmentation_ratio: 0.0
+
+lora:
+  r: 16
+  train_attn: true
+  train_mlp: true
+  train_unembed: false
+
+training:
+  batch_size: 32
+  learning_rate: 2.0e-4
+  num_epochs: 3
+  max_seq_length: 16384
+  seed: 42
+  checkpoint_every_steps: 100
+  diagnostic_steps: [50, 100]
+  diagnostic_samples_per_task: 64
+  trial_verification:
+    version: trial_training_sampling_closure_v2
+    probe_per_task: 2
+    logprob_atol: 1.0e-4
+    logprob_rtol: 1.0e-4
+    min_update_delta: 1.0e-6
+    jitter_multiplier: 3.0
+  action_supervision:
+    version: empirical_all_answers_weighted_actions_v3
+    positive_gap_weight: 0.5
+    tie_tolerance: 1.0e-12
+    gap_threshold: 0.05
+    target_selection: all_acceptable_answers_per_state
+    answer_weighting: equal_share_of_state_weight
+    action_weight_normalization: train_mean
+    checkpoint_selection: val_action_set_nll
+    action_ending: first_assistant_eos_inclusive
+
+sampling:
+  temperature: 0.2
+  top_p: 0.9
+  max_new_tokens: 256
+  fallback_strategy: card_counter_safe
+
+rs:
+  target_samples: 2000
+  belief_target_samples: 2000
+  num_games: 400
+  max_games: 2000
+  candidates_per_state: 4
+  candidate_temperature: 0.7
+  rollouts_per_candidate: 16
+  min_advantage_margin: 0.05
+  learning_rate: 5.0e-5
+  num_epochs: 1
+
+evaluation:
+  num_blocks: 45
+  bootstrap_samples: 10000
+  unseen_belief_samples: 1000
+  unseen_belief_max_games: 1000
+  endgame_coverage_dir: endgame_coverage

@@ -50,26 +50,37 @@ def write_jsonl(path: Path, records: Iterable[dict]) -> None:
             stream.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def config_method_version(config: dict) -> str:
+    return str(config.get("method_version", "v2"))
+
+
 def load_config(path: str | Path) -> dict:
     path = Path(path).resolve()
     config = read_json(path) if path.suffix == ".json" else yaml.safe_load(path.read_text(encoding="utf-8"))
     if config["platform"] != "tinker":
         raise ValueError("The implemented real training backend is Tinker.")
+    mv = config_method_version(config)
     if "contract" in config:
-        require_contract(config, "saved experiment configuration")
+        require_contract(config, "saved experiment configuration", method_version=mv)
     if "opponents" not in config:
         pool_path = path.parent / config.pop("opponent_config", "opponent_pools.yaml")
         config["opponents"] = yaml.safe_load(pool_path.read_text(encoding="utf-8"))
     # Instantiate configured agents once to catch misspelled or unused parameters.
-    for pool in ("seen_pool", "unseen_pool"):
-        for spec in config["opponents"][pool]["agents"]:
-            create_rule_agent(spec["class"], name=spec["id"], **spec.get("params", {}))
-    config["contract"] = current_contract()
+    if mv == "adaptive_v4":
+        from liars_agent.training.adaptive_opponents import create_v4_opponent
+        for pool in ("seen_pool", "unseen_pool"):
+            for spec in config["opponents"][pool]["agents"]:
+                create_v4_opponent(spec["class"], name=spec["id"], **spec.get("params", {}))
+    else:
+        for pool in ("seen_pool", "unseen_pool"):
+            for spec in config["opponents"][pool]["agents"]:
+                create_rule_agent(spec["class"], name=spec["id"], **spec.get("params", {}))
+    config["contract"] = current_contract(mv)
     from liars_agent.training.action_supervision import normalize_action_policy
     config["training"]["action_supervision"] = normalize_action_policy(config["training"].get("action_supervision"))
     if config["dataset"].get("history_ablation_augmentation_ratio", 0) != 0:
         raise ValueError("Training history augmentation is disabled in this method version.")
-    if {s["class"] for s in config["opponents"]["seen_pool"]["agents"]} != {"HonestConservativeBot", "AggressiveBlufferBot", "CardCounterBot"}:
+    if mv == "v2" and {s["class"] for s in config["opponents"]["seen_pool"]["agents"]} != {"HonestConservativeBot", "AggressiveBlufferBot", "CardCounterBot"}:
         raise ValueError("Training requires the three configured seen classes only.")
     return config
 
@@ -89,6 +100,10 @@ def teacher_config(config: dict) -> dict:
 def opponent_factories(config: dict, pool: str = "seen") -> list:
     pools = config["opponents"]
     specs = {a["id"]: a for key in ("seen_pool", "unseen_pool") for a in pools[key]["agents"]}
+    if config_method_version(config) == "adaptive_v4":
+        from liars_agent.training.adaptive_opponents import create_v4_opponent
+        return [partial(create_v4_opponent, specs[name]["class"], name, **specs[name].get("params", {}))
+                for name in pools["default_matchups"][f"{pool}_lineup"]]
     return [partial(create_rule_agent, specs[name]["class"], name, **specs[name].get("params", {}))
             for name in pools["default_matchups"][f"{pool}_lineup"]]
 
@@ -129,7 +144,228 @@ def _generate_data_batch(job: tuple) -> dict:
     return result
 
 
+def _generate_v4_replay_batch(job: tuple) -> dict:
+    from liars_agent.engine.replay import verify_replay_determinism
+    from liars_agent.training.adaptive_teacher import extract_v4_belief_samples, generate_adaptive_v4_replays
+
+    config, output, batch_id, games, belief_target = job
+    path = Path(output)
+    meta_path = path / f"v4_replays_batch_{batch_id:04d}.json"
+    if meta_path.exists():
+        result = read_json(meta_path)
+        require_contract(result, "v4 replay batch", method_version="adaptive_v4")
+        return result
+    ds = config["dataset"]
+    seed = _derive_seed(config["seed"], "dataset_batch", batch_id)
+    replay_path = path / f"replays_{batch_id:04d}.jsonl"
+    if replay_path.exists():
+        replays = list(read_jsonl(replay_path))
+        for replay in replays:
+            verify_replay_determinism(replay, raise_on_error=True)
+    else:
+        replays = generate_adaptive_v4_replays(games, seed)
+        save_replays_jsonl(replays, replay_path)
+        replays = [r.to_dict() for r in replays]
+    partition = split_game_ids((r["game_id"] for r in replays), ds["train_ratio"], ds["val_ratio"], seed)
+    write_json(path / f"partition_{batch_id:04d}.json", {"contract": current_contract("adaptive_v4"), "game_splits": partition})
+    beliefs = extract_v4_belief_samples(replays, belief_target, seed)
+    belief_path = path / f"beliefs_{batch_id:04d}.jsonl"
+    write_jsonl(belief_path, beliefs)
+    result = {
+        "contract": current_contract("adaptive_v4"),
+        "batch_id": batch_id,
+        "num_belief_samples": len(beliefs),
+        "num_games": len(replays),
+        "game_splits": partition,
+        "beliefs_path": str(belief_path),
+        "replays_path": str(replay_path),
+    }
+    write_json(meta_path, result)
+    return result
+
+
+def _extract_v4_action_batch(job: tuple) -> dict:
+    from liars_agent.training.adaptive_teacher import CalibratedPosteriorBelief, extract_v4_action_samples
+
+    config, output, batch_meta, target, posterior_path = job
+    path = Path(output)
+    batch_id = int(batch_meta["batch_id"])
+    completed = path / f"batch_{batch_id:04d}.json"
+    if completed.exists():
+        result = read_json(completed)
+        require_contract(result, "v4 data batch", method_version="adaptive_v4")
+        return result
+    ds = config["dataset"]
+    seed = _derive_seed(config["seed"], "dataset_batch", batch_id)
+    calibrated = CalibratedPosteriorBelief.load(posterior_path)
+    replays = list(read_jsonl(Path(batch_meta["replays_path"])))
+    beliefs = list(read_jsonl(Path(batch_meta["beliefs_path"])))
+    actions = extract_v4_action_samples(
+        replays,
+        target,
+        belief_fn=calibrated.predict,
+        num_rollouts=int(ds["rollout_trajectories_per_state"]),
+        margin=float(ds["min_advantage_margin"]),
+        seed=seed,
+        history_critical_ratio=float(ds.get("history_critical_ratio", 0.5)),
+        action_supervision_policy=config["training"].get("action_supervision"),
+    )
+    samples_path = path / f"samples_{batch_id:04d}.jsonl"
+    write_jsonl(samples_path, actions + beliefs)
+    result = {
+        "contract": current_contract("adaptive_v4"),
+        "batch_id": batch_id,
+        "num_samples": len(actions),
+        "num_belief_samples": len(beliefs),
+        "num_games": int(batch_meta["num_games"]),
+        "game_splits": batch_meta["game_splits"],
+        "samples_path": str(samples_path),
+        "replays_path": batch_meta["replays_path"],
+    }
+    write_json(completed, result)
+    return result
+
+
+def generate_adaptive_v4_data(config: dict, output: Path) -> dict:
+    """Two-pass v4 generator: symmetric pool replays + train-only calibrated posterior + posterior rollout teacher."""
+    from liars_agent.engine.observation import PlayerObservation
+    from liars_agent.training.adaptive_teacher import (
+        CalibratedPosteriorBelief,
+        build_v4_counterfactual_train_samples,
+    )
+
+    ds = config["dataset"]
+    batches_dir = output / "dataset/batches"
+    batches_dir.mkdir(parents=True, exist_ok=True)
+    games, target = int(ds["num_games"]), int(ds["total_target_samples"])
+    belief_target = int(ds["belief_target_samples"])
+    if min(games, target, belief_target) < 3 or ds["workers"] < 1:
+        raise ValueError("Data generation needs at least three games and examples per task.")
+    batch_size = int(ds["batch_games"])
+    if batch_size < 3:
+        raise ValueError("Batches need at least three games for shared train/val/test partitions.")
+
+    replay_jobs = []
+    action_quotas = []
+    for batch_id, start in enumerate(range(0, games, batch_size)):
+        count = min(batch_size, games - start)
+        quota = target * (start + count) // games - target * start // games
+        belief_quota = belief_target * (start + count) // games - belief_target * start // games
+        replay_jobs.append((config, str(batches_dir), batch_id, count, belief_quota))
+        action_quotas.append(quota)
+
+    if int(ds["workers"]) == 1:
+        replay_metas = list(map(_generate_v4_replay_batch, replay_jobs))
+    else:
+        with ProcessPoolExecutor(max_workers=min(int(ds["workers"]), len(replay_jobs))) as pool:
+            replay_metas = list(pool.map(_generate_v4_replay_batch, replay_jobs))
+
+    # Fit CalibratedPosteriorBelief strictly on train-split belief rows (zero val/test leakage!)
+    posterior_path = output / "models/v4_calibrated_posterior.json"
+    if posterior_path.exists():
+        calibrated = CalibratedPosteriorBelief.load(posterior_path)
+    else:
+        train_game_set = {gid for meta in replay_metas for gid in meta["game_splits"]["train"]}
+        train_belief_pairs = []
+        for meta in replay_metas:
+            for row in read_jsonl(Path(meta["beliefs_path"])):
+                if row["game_id"] in train_game_set:
+                    train_belief_pairs.append((PlayerObservation.from_dict(row["observation"]), int(row["label"])))
+        if not train_belief_pairs:
+            raise ValueError("No train-split belief samples available to fit v4 calibrated posterior.")
+        calibrated = CalibratedPosteriorBelief()
+        calibrated.fit(train_belief_pairs, lr=0.06, epochs=25)
+        calibrated.save(posterior_path)
+
+    action_jobs = [
+        (config, str(batches_dir), meta, quota, str(posterior_path))
+        for meta, quota in zip(replay_metas, action_quotas)
+    ]
+    if int(ds["workers"]) == 1:
+        results = list(map(_extract_v4_action_batch, action_jobs))
+    else:
+        with ProcessPoolExecutor(max_workers=min(int(ds["workers"]), len(action_jobs))) as pool:
+            results = list(pool.map(_extract_v4_action_batch, action_jobs))
+
+    max_games = int(ds.get("max_games", games * 2))
+    completed_games = sum(item["num_games"] for item in results)
+    sample_count = sum(item["num_samples"] for item in results)
+    belief_count = sum(item["num_belief_samples"] for item in results)
+    while (sample_count < target or belief_count < belief_target) and completed_games < max_games:
+        count = min(batch_size, max_games - completed_games)
+        next_id = len(results)
+        meta = _generate_v4_replay_batch((
+            config, str(batches_dir), next_id, count,
+            min(belief_target - belief_count, math.ceil(belief_target / games) * count),
+        ))
+        item = _extract_v4_action_batch((
+            config, str(batches_dir), meta,
+            min(target - sample_count, math.ceil(target / games) * count),
+            str(posterior_path),
+        ))
+        results.append(item)
+        completed_games += item["num_games"]
+        sample_count += item["num_samples"]
+        belief_count += item["num_belief_samples"]
+
+    samples = [s for item in results for s in read_jsonl(Path(item["samples_path"]))]
+    game_ids = {key: [gid for item in results for gid in item["game_splits"][key]] for key in ("train", "val", "test")}
+
+    # Optional counterfactual history-contrast pairs strictly into the train split
+    cf_pairs = int(ds.get("counterfactual_train_pairs", 0))
+    cf_samples, cf_gids = build_v4_counterfactual_train_samples(
+        cf_pairs,
+        belief_fn=calibrated.predict,
+        seed=int(config["seed"]),
+        num_rollouts=int(ds["rollout_trajectories_per_state"]),
+        action_supervision_policy=config["training"].get("action_supervision"),
+    )
+    if cf_samples:
+        samples.extend(cf_samples)
+        game_ids["train"].extend(cf_gids)
+        sample_count += len(cf_samples)
+
+    splits = split_dataset_by_game_id(samples, game_splits=game_ids)
+    for key, rows in splits.items():
+        for task in ("action", "belief"):
+            subset = [r for r in rows if r["task"] == task]
+            if not subset:
+                raise ValueError(f"{key} has no {task} samples; generate more whole games.")
+            write_jsonl(output / f"dataset/{task}_{key}.jsonl", subset)
+        write_jsonl(output / f"dataset/{key}.jsonl", rows)
+    write_json(output / "dataset/game_splits.json", game_ids)
+    write_jsonl(output / "dataset/sft_all_samples.jsonl", samples)
+    classifier = SmallClassifierBot(name="small_classifier")
+    classifier_stats = classifier.fit_from_belief_samples(
+        (r for r in splits["train"] if r["task"] == "belief"), method_version="adaptive_v4"
+    )
+    classifier.save_weights(output / "models/small_classifier_weights.json", method_version="adaptive_v4")
+    summary = {
+        "contract": current_contract("adaptive_v4"),
+        "method_version": "adaptive_v4",
+        "target_samples": target,
+        "actual_samples": sample_count,
+        "belief_target_samples": belief_target,
+        "actual_belief_samples": belief_count,
+        "counterfactual_train_samples": len(cf_samples),
+        "calibrated_posterior_path": str(posterior_path),
+        "shortfall": max(0, target - sample_count) + max(0, belief_target - belief_count),
+        "games_generated": completed_games,
+        "samples_per_split": {k: len(v) for k, v in splits.items()},
+        "task_samples_per_split": {k: {t: sum(r["task"] == t for r in v) for t in ("action", "belief")} for k, v in splits.items()},
+        "games_per_split": {k: len(v) for k, v in game_ids.items()},
+        "classifier_fit": classifier_stats,
+        "batches": results,
+        "teacher": "calibrated_posterior_continuation_v4",
+    }
+    write_json(output / "dataset/data_summary.json", summary)
+    print(f"Data (adaptive_v4): action {sample_count}/{target} (incl. {len(cf_samples)} cf), belief {belief_count}/{belief_target}", flush=True)
+    return summary
+
+
 def generate_data(config: dict, output: Path) -> dict:
+    if config_method_version(config) == "adaptive_v4":
+        return generate_adaptive_v4_data(config, output)
     ds = config["dataset"]
     batches_dir = output / "dataset/batches"
     batches_dir.mkdir(parents=True, exist_ok=True)
@@ -209,8 +445,9 @@ def require_verified_trial(config: dict, metadata: dict, splits: dict | None = N
     """A saved trial is usable only if its complete verification actually passed."""
     from liars_agent.training.action_supervision import require_training_objective
     from liars_agent.training.tinker_train import split_paths_sha256, splits_sha256
+    mv = config_method_version(config)
     verification, sampling = trial_settings(config)
-    require_contract(metadata, "trial metadata")
+    require_contract(metadata, "trial metadata", method_version=mv)
     require_training_objective(metadata, config["training"].get("action_supervision"))
     closure = metadata.get("trial_verification") or {}
     if (metadata.get("training_status") != "trial_complete" or closure.get("status") != "passed"
@@ -313,8 +550,9 @@ def estimate_cost(config: dict, output: Path, *, max_train_steps: int | None = N
     from liars_agent.training.tinker_train import build_sft_datum, select_diagnostic_rows, training_diagnostic_plan
     from liars_agent.training.tinker_backend import PRICING_SOURCE, PRICING_DATE
     from liars_agent.training.action_supervision import normalize_action_policy, action_target_completions, mean_action_weight
-    from liars_agent.agents.prompt_builder import BELIEF_SYSTEM_PROMPT, build_bluff_user_prompt
+    from liars_agent.agents.prompt_builder import belief_prompt_for_method
     from liars_agent.engine.observation import PlayerObservation
+    mv = config_method_version(config)
     backend = make_backend(config, output)
     policy = normalize_action_policy(config["training"].get("action_supervision"))
     lengths, counts, score_costs, grouped = {}, {}, [], {}
@@ -337,8 +575,9 @@ def estimate_cost(config: dict, output: Path, *, max_train_steps: int | None = N
             lengths[key][row["task"]].append(token_length(row))
             if row["task"] == "belief":
                 obs = PlayerObservation.from_dict(row["observation"])
-                prefix = backend.encode_messages([{"role": "system", "content": BELIEF_SYSTEM_PROMPT},
-                    {"role": "user", "content": build_bluff_user_prompt(obs)}], generation=True)
+                b_sys, b_usr = belief_prompt_for_method(obs, mv)
+                prefix = backend.encode_messages([{"role": "system", "content": b_sys},
+                    {"role": "user", "content": b_usr}], generation=True)
                 score_costs.append((2 * (len(prefix) + 1) * backend.rates["prefill"] + 2 * backend.rates["sample"]) / 1_000_000)
         counts[key] = {task: sum(sizes) for task, sizes in lengths[key].items()}
     if any(not sizes for sizes in lengths["train"].values()):
@@ -385,7 +624,7 @@ def estimate_cost(config: dict, output: Path, *, max_train_steps: int | None = N
     diagnostic_tokens = (diagnostic_action_tokens + diagnostic_belief_tokens) * len(plan["diagnostic_steps"])
     full_validation_tokens = (validation_action_tokens + counts["val"]["belief"]) * plan["full_validation_epochs"]
     validation_tokens = full_validation_tokens + diagnostic_tokens
-    result = {"contract": current_contract(), "model": config["base_model"], "tokens_by_split_and_task": counts,
+    result = {"contract": current_contract(mv), "model": config["base_model"], "tokens_by_split_and_task": counts,
         "max_input_tokens": maximum, "balanced_training_tokens": training_tokens,
         "training_logical_state_visits": logical_visits,
         "training_expanded_sequences": expanded_sequences,
@@ -425,6 +664,7 @@ def estimate_cost(config: dict, output: Path, *, max_train_steps: int | None = N
 def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_train_steps: int | None = None) -> dict:
     from liars_agent.training.tinker_train import run_tinker_lora_sft
     from liars_agent.training.action_supervision import normalize_action_policy, require_training_objective
+    mv = config_method_version(config)
     policy = normalize_action_policy(config["training"].get("action_supervision"))
     is_trial = stage == "sft_trial"
     if not is_trial and max_train_steps is not None:
@@ -433,7 +673,7 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
     path = output / f"models/{stage}" / ("trial_metadata.json" if is_trial else "adapter_metadata.json")
     if path.exists():
         metadata = read_json(path)
-        require_contract(metadata, "model metadata")
+        require_contract(metadata, "model metadata", method_version=mv)
         require_training_objective(metadata, policy)
         if is_trial:
             if metadata.get("max_train_steps") != max_train_steps:
@@ -441,7 +681,7 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
             require_verified_trial(config, metadata, split_paths=split_paths)
         return metadata
     ds_summary = read_json(output / "dataset/data_summary.json")
-    require_contract(ds_summary, "dataset summary")
+    require_contract(ds_summary, "dataset summary", method_version=mv)
     if ds_summary["shortfall"]:
         raise ValueError(f"Dataset shortfall: {ds_summary['shortfall']}; increase num_games in a new run before formal training.")
     training = config["training"]
@@ -463,7 +703,7 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
                for task, key in (("action", "target_samples"), ("belief", "belief_target_samples"))):
             raise ValueError("RS dataset has not reached its configured target.")
         resume_metadata = read_json(output / "models/sft/adapter_metadata.json")
-        require_contract(resume_metadata, "SFT resume checkpoint")
+        require_contract(resume_metadata, "SFT resume checkpoint", method_version=mv)
         require_training_objective(resume_metadata, policy)
         resume_from = resume_metadata["state_path"]
     train_stub = [{"game_id": row["game_id"], "task": row["task"]} for row in read_jsonl(split_paths["train"])]
@@ -485,16 +725,19 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
         diagnostic_samples_per_task=training.get("diagnostic_samples_per_task", 64),
         max_train_steps=max_train_steps,
         trial_verification_config=verification, trial_sampling_config=trial_sampling,
+        method_version=mv,
     )
 
 
 def llm_factory(config: dict, output: Path, backend, key: str):
     from liars_agent.agents.llm_agent import LLMAgent
+    mv = config_method_version(config)
     adapter = None if key == "zero_shot" else output / f"models/{'sft' if key == 'lora_sft' else 'rs'}/adapter_metadata.json"
     sampling = config["sampling"]
     return lambda seed: LLMAgent(name=key, mode="lora_rs_improved" if key == "lora_rs" else key,
         model_version=config["base_model"], backend=backend, adapter_path=adapter, seed=seed,
-        temperature=sampling["temperature"], top_p=sampling["top_p"], max_new_tokens=sampling["max_new_tokens"])
+        temperature=sampling["temperature"], top_p=sampling["top_p"], max_new_tokens=sampling["max_new_tokens"],
+        method_version=mv)
 
 
 def generate_rs_data(config: dict, output: Path, backend) -> dict:
@@ -502,6 +745,7 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
     from liars_agent.training.action_supervision import make_action_supervision, normalize_action_policy
     from liars_agent.engine.observation import PlayerObservation
     from liars_agent.engine.replay import verify_replay_determinism
+    mv = config_method_version(config)
     rs = config["rs"]
     policy = normalize_action_policy(config["training"].get("action_supervision"))
     candidate_temp = float(rs.get("candidate_temperature", max(0.7, float(config["sampling"]["temperature"]))))
@@ -510,6 +754,16 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
     accepted, beliefs = [], []
     factory = llm_factory(config, output, backend, "lora_sft")
     factories = opponent_factories(config)
+    v4_calibrated = None
+    if mv == "adaptive_v4":
+        from liars_agent.training.adaptive_opponents import ParameterizedArchetypeBot, V4_TRAIN_ARCHETYPES
+        from liars_agent.training.adaptive_teacher import (
+            CalibratedPosteriorBelief,
+            evaluate_posterior_teacher_values,
+            extract_v4_belief_samples,
+            make_v4_action_sample,
+        )
+        v4_calibrated = CalibratedPosteriorBelief.load(output / "models/v4_calibrated_posterior.json")
     target, belief_target = rs["target_samples"], rs["belief_target_samples"]
     for index in range(rs.get("max_games", rs["num_games"] * 5)):
         if len(accepted) >= target and len(beliefs) >= belief_target:
@@ -518,7 +772,7 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
         if shard.exists():
             rows = list(read_jsonl(shard))
             for row in rows:
-                require_contract(row, "RS sample")
+                require_contract(row, "RS sample", method_version=mv)
             accepted.extend(r for r in rows if r["task"] == "action")
             beliefs.extend(r for r in rows if r["task"] == "belief")
             continue
@@ -526,13 +780,20 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
         game_id = f"rs_train_{index:05d}"
         actor = index % 4
         agent = factory(_derive_seed(config["seed"], "rs_actor", index))
-        order = list(range(3))
-        random.Random(_derive_seed(config["seed"], "rs_order", index)).shuffle(order)
         lineup = [None] * 4
         lineup[actor] = agent
-        for offset, spec_index in enumerate(order, 1):
-            seat = (actor + offset) % 4
-            lineup[seat] = factories[spec_index](seed=_derive_seed(config["seed"], "rs_policy", index, seat))
+        if mv == "adaptive_v4":
+            opp_rng = random.Random(_derive_seed(config["seed"], "rs_v4_opps", index))
+            picks = [opp_rng.choice(V4_TRAIN_ARCHETYPES) for _ in range(3)]
+            for offset, spec in enumerate(picks, 1):
+                seat = (actor + offset) % 4
+                lineup[seat] = ParameterizedArchetypeBot(spec, seed=_derive_seed(config["seed"], "rs_policy", index, seat))
+        else:
+            order = list(range(3))
+            random.Random(_derive_seed(config["seed"], "rs_order", index)).shuffle(order)
+            for offset, spec_index in enumerate(order, 1):
+                seat = (actor + offset) % 4
+                lineup[seat] = factories[spec_index](seed=_derive_seed(config["seed"], "rs_policy", index, seat))
         replay_path = shard.with_suffix(".replay.jsonl")
         if replay_path.exists():
             replay = next(read_jsonl(replay_path))
@@ -552,8 +813,12 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
         if points_cache_path.exists():
             for entry in read_jsonl(points_cache_path):
                 cached_points[(entry["round_id"], entry["step_id"])] = entry
-        belief_rows = extract_belief_samples([replay], min(belief_target - len(beliefs),
-            math.ceil(belief_target / rs["num_games"])), _derive_seed(config["seed"], "rs_belief", index), actor)
+        if mv == "adaptive_v4":
+            belief_rows = extract_v4_belief_samples([replay], min(belief_target - len(beliefs),
+                math.ceil(belief_target / rs["num_games"])), _derive_seed(config["seed"], "rs_belief", index), actor)
+        else:
+            belief_rows = extract_belief_samples([replay], min(belief_target - len(beliefs),
+                math.ceil(belief_target / rs["num_games"])), _derive_seed(config["seed"], "rs_belief", index), actor)
         points = [p for p in replay["steps"] if p["actor_seat"] == actor and len(p["observation"]["legal_actions"]) > 1]
         random.Random(_derive_seed(config["seed"], "rs_points", index)).shuffle(points)
         samples = []
@@ -567,7 +832,7 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
                 cached_entry = cached_points[point_key]
                 if cached_entry.get("accepted") and cached_entry.get("sample") is not None:
                     sample = cached_entry["sample"]
-                    require_contract(sample, "RS sample")
+                    require_contract(sample, "RS sample", method_version=mv)
                     samples.append(sample)
                 continue
             try:
@@ -580,19 +845,40 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
                 cached_points[point_key] = {"round_id": obs.round_id, "step_id": obs.step_id, "accepted": False}
                 write_jsonl(points_cache_path, cached_points.values())
                 continue
-            values = evaluate_observation_action_values(obs, teacher_config(config), rs["rollouts_per_candidate"],
-                _derive_seed(config["seed"], "rs_teacher", index, obs.round_id, obs.step_id), list(candidates.values()))
+            if mv == "adaptive_v4":
+                values = evaluate_posterior_teacher_values(
+                    obs,
+                    num_rollouts=rs["rollouts_per_candidate"],
+                    rollout_seed=_derive_seed(config["seed"], "rs_teacher", index, obs.round_id, obs.step_id),
+                    belief_fn=v4_calibrated.predict,
+                    candidate_actions=list(candidates.values()),
+                )
+            else:
+                values = evaluate_observation_action_values(obs, teacher_config(config), rs["rollouts_per_candidate"],
+                    _derive_seed(config["seed"], "rs_teacher", index, obs.round_id, obs.step_id), list(candidates.values()))
             best = max(candidates.values(), key=lambda a: (values[a.action_id], a.action_type, a.cards))
             advantage = values[best.action_id] - sum(values.values()) / len(values)
             if advantage < rs["min_advantage_margin"]:
                 cached_points[point_key] = {"round_id": obs.round_id, "step_id": obs.step_id, "accepted": False}
                 write_jsonl(points_cache_path, cached_points.values())
                 continue
-            sample = make_action_sample(obs, best, game_id, rollout_advantage=advantage,
-                rollout_best_value=values[best.action_id], candidate_count=len(values), source="sft_rejection_sampling",
-                teacher="pool_prior_counter_continuation", rollout_candidate_values=values)
-            sample["action_supervision"] = make_action_supervision(sample, values, policy,
-                                                                   source="sft_rejection_sampling")
+            if mv == "adaptive_v4":
+                sample = make_v4_action_sample(
+                    obs, best, game_id,
+                    rollout_candidate_values=values,
+                    action_supervision_policy=policy,
+                    rollout_advantage=advantage,
+                    rollout_best_value=values[best.action_id],
+                    candidate_count=len(values),
+                    source="sft_rejection_sampling",
+                    teacher="calibrated_posterior_continuation_v4",
+                )
+            else:
+                sample = make_action_sample(obs, best, game_id, rollout_advantage=advantage,
+                    rollout_best_value=values[best.action_id], candidate_count=len(values), source="sft_rejection_sampling",
+                    teacher="pool_prior_counter_continuation", rollout_candidate_values=values)
+                sample["action_supervision"] = make_action_supervision(sample, values, policy,
+                                                                       source="sft_rejection_sampling")
             cached_points[point_key] = {"round_id": obs.round_id, "step_id": obs.step_id, "accepted": True, "sample": sample}
             write_jsonl(points_cache_path, cached_points.values())
             samples.append(sample)
@@ -603,7 +889,7 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
         beliefs.extend(belief_rows)
         print(f"RS data: action {len(accepted)}/{target}, belief {len(beliefs)}/{belief_target}", flush=True)
     write_jsonl(output / "dataset/rs_train.jsonl", accepted + beliefs)
-    summary = {"contract": current_contract(), "actual_samples": len(accepted), "target_samples": target,
+    summary = {"contract": current_contract(mv), "actual_samples": len(accepted), "target_samples": target,
         "actual_belief_samples": len(beliefs), "belief_target_samples": belief_target,
         "shortfall": max(0, target - len(accepted)) + max(0, belief_target - len(beliefs))}
     write_json(output / "dataset/rs_summary.json", summary)
@@ -613,17 +899,22 @@ def generate_rs_data(config: dict, output: Path, backend) -> dict:
 def frozen_belief_samples(config: dict, output: Path, pool: str) -> list[dict]:
     from liars_agent.training.data_generator import extract_belief_samples
     from liars_agent.engine.replay import verify_replay_determinism
+    mv = config_method_version(config)
     path = output / f"dataset/frozen_belief_{pool}.jsonl"
     if path.exists():
         rows = list(read_jsonl(path))
         for row in rows:
-            require_contract(row, "frozen belief observations")
+            require_contract(row, "frozen belief observations", method_version=mv)
         return rows
     if pool == "seen":
         rows = list(read_jsonl(output / "dataset/belief_test.jsonl"))
     else:
         target = config["evaluation"]["unseen_belief_samples"]
         factories = opponent_factories(config, "unseen")
+        extract_fn = extract_belief_samples
+        if mv == "adaptive_v4":
+            from liars_agent.training.adaptive_teacher import extract_v4_belief_samples
+            extract_fn = extract_v4_belief_samples
         rows = []
         for index in range(config["evaluation"]["unseen_belief_max_games"]):
             if len(rows) >= target:
@@ -645,7 +936,7 @@ def frozen_belief_samples(config: dict, output: Path, pool: str) -> list[dict]:
             replay = GameReplayBundle.from_engine(engine, [a.name for a in agents])
             verify_replay_determinism(replay, raise_on_error=True)
             save_replays_jsonl([replay], output / f"dataset/frozen_belief_replays/game_{index:05d}.jsonl")
-            rows.extend(extract_belief_samples([replay], min(10, target - len(rows)),
+            rows.extend(extract_fn([replay], min(10, target - len(rows)),
                 _derive_seed(config["seed"], "probe_selection", index), seat))
         if len(rows) < target:
             raise ValueError(f"Frozen unseen belief set has {len(rows)}/{target} observations.")
@@ -659,6 +950,7 @@ def evaluate_frozen_beliefs(config, output, backend, model_keys):
     from liars_agent.agents.base import estimate_heuristic_bluff_belief
     from liars_agent.engine.observation import PlayerObservation
     from liars_agent.evaluation.metrics import compute_probability_calibration, compute_paired_probability_metrics
+    mv = config_method_version(config)
     results = {}
     for pool in ("seen", "unseen"):
         rows = frozen_belief_samples(config, output, pool)
@@ -668,14 +960,14 @@ def evaluate_frozen_beliefs(config, output, backend, model_keys):
             path = output / f"evaluation/belief_{pool}_{key}.json"
             if path.exists():
                 stored = read_json(path)
-                require_contract(stored, "frozen belief predictions")
+                require_contract(stored, "frozen belief predictions", method_version=mv)
                 if [r["sample_id"] for r in stored["predictions"]] != [r["sample_id"] for r in rows]:
                     raise ValueError("Frozen belief prediction IDs differ from the held-out set.")
                 predictions[key] = stored["predictions"]
                 results[pool][key] = stored["metrics"]
                 continue
             if key == "small_classifier":
-                agent = SmallClassifierBot.load_weights(output / "models/small_classifier_weights.json")
+                agent = SmallClassifierBot.load_weights(output / "models/small_classifier_weights.json", method_version=mv)
             elif key == "rule_counter":
                 agent = None
             else:
@@ -704,7 +996,7 @@ def evaluate_frozen_beliefs(config, output, backend, model_keys):
             metadata = {"model_key": key, "base_model": config["base_model"] if agent is not None and hasattr(agent, "checkpoint") else None,
                 "checkpoint": getattr(agent, "checkpoint", None),
                 "belief_source": {"small_classifier": "classifier", "rule_counter": "heuristic"}.get(key, "model")}
-            stored = {"contract": current_contract(), "predictions": records, "metrics": metrics,
+            stored = {"contract": current_contract(mv), "predictions": records, "metrics": metrics,
                 "model_metadata": metadata, "usage": agent.tracker.to_dict() if hasattr(agent, "tracker") else {"api_calls": 0}}
             write_json(path, stored)
             predictions[key], results[pool][key] = records, metrics
@@ -720,6 +1012,7 @@ def evaluate_endgames(config: dict, output: Path, backend, model_keys: list[str]
     from liars_agent.evaluation.endgame_model import evaluate_endgame_models
     from liars_agent.evaluation.endgame_coverage import validate_endgame_coverage, _validate_endgame_coverage
     from liars_agent.training.dataset_release import validate_dataset_release
+    mv = config_method_version(config)
     release = validate_dataset_release(output)
     directory = endgame_directory(config, output)
     if not (directory / "coverage_report.json").exists():
@@ -739,7 +1032,7 @@ def evaluate_endgames(config: dict, output: Path, backend, model_keys: list[str]
         target = output / f"evaluation/endgame_{key}.json"
         # The evaluator validates frozen files and their fingerprint before model calls.
         if key == "small_classifier":
-            agent = SmallClassifierBot.load_weights(output / "models/small_classifier_weights.json")
+            agent = SmallClassifierBot.load_weights(output / "models/small_classifier_weights.json", method_version=mv)
         elif key == "rule_counter":
             agent = CardCounterBot(name=key, seed=_derive_seed(config["seed"], "endgame_model"))
         else:
@@ -748,7 +1041,7 @@ def evaluate_endgames(config: dict, output: Path, backend, model_keys: list[str]
         result = evaluate_endgame_models(directory, {key: agent}, cached_results=cached)
         write_json(target, result["models"][key])
         results[key] = result["models"][key]
-    summary = {"contract": current_contract(), "status": "complete", "dataset": result["dataset"],
+    summary = {"contract": current_contract(mv), "status": "complete", "dataset": result["dataset"],
         "natural_distribution": False, "models": results,
         "interpretation": "Independent diagnostic strata; free-action results are protocol checks, not optimal-action accuracy or win rate."}
     write_json(output / "evaluation/endgame_summary.json", summary)
@@ -759,6 +1052,7 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
     from liars_agent.evaluation.duplicate_runner import run_duplicate_evaluation
     from liars_agent.evaluation.metrics import (compute_behavioral_profile, compute_belief_calibration,
         compute_risk_and_hand_stratified_diagnosis, compute_paired_bootstrap_ci)
+    mv = config_method_version(config)
     results = {}
     for pool in ("seen", "unseen"):
         results[pool] = {}
@@ -767,10 +1061,10 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
             replay_path = target.with_suffix(".replays.jsonl")
             if target.exists():
                 results[pool][key] = read_json(target)
-                require_contract(results[pool][key], "evaluation result")
+                require_contract(results[pool][key], "evaluation result", method_version=mv)
                 continue
             if key == "small_classifier":
-                factory = lambda seed: SmallClassifierBot.load_weights(output / "models/small_classifier_weights.json")
+                factory = lambda seed: SmallClassifierBot.load_weights(output / "models/small_classifier_weights.json", method_version=mv)
                 metadata = {"backend": "local_classifier", "weights": str(output / "models/small_classifier_weights.json")}
             elif key == "rule_counter":
                 factory = lambda seed: CardCounterBot(name="rule_counter", seed=seed)
@@ -786,7 +1080,7 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
                 num_resamples=config["evaluation"]["bootstrap_samples"], bootstrap_seed=config["seed"],
                 cache_dir=output / f"evaluation/blocks/{pool}_{key}_full")
             data = result.to_dict(include_replays=False)
-            data["contract"] = current_contract()
+            data["contract"] = current_contract(mv)
             replay_dicts = [r.to_dict() for r in result.replays]
             data["profile"] = compute_behavioral_profile(replay_dicts, result.agent_name)
             data["calibration"] = compute_belief_calibration(replay_dicts, result.agent_name,
@@ -811,7 +1105,7 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
                 target = output / f"evaluation/ablation_{mode}.json"
                 if target.exists():
                     data = read_json(target)
-                    require_contract(data, "ablation result")
+                    require_contract(data, "ablation result", method_version=mv)
                 else:
                     result = run_duplicate_evaluation(llm_factory(config, output, backend, "lora_sft"),
                         opponent_factories(config), num_blocks=config["evaluation"]["num_blocks"],
@@ -821,7 +1115,7 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
                         bootstrap_seed=config["seed"],
                         cache_dir=output / f"evaluation/blocks/ablation_{mode}")
                     data = result.to_dict(include_replays=False)
-                    data["contract"] = current_contract()
+                    data["contract"] = current_contract(mv)
                     data["profile"] = compute_behavioral_profile([r.to_dict() for r in result.replays], "lora_sft")
                     save_replays_jsonl(result.replays, target.with_suffix(".replays.jsonl"))
                     write_json(target, data)
@@ -832,7 +1126,7 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
                     "challenge_hit_rate": data["profile"]["denominators"]["challenge_hit_rate"]}})
     frozen = evaluate_frozen_beliefs(config, output, backend, model_keys)
     endgames = evaluate_endgames(config, output, backend, model_keys)
-    summary = {"contract": current_contract(), "frozen_belief": frozen, "endgame_diagnostics": endgames, "status": "complete" if set(model_keys) == set(MODEL_LABELS) else "selected_models_only",
+    summary = {"contract": current_contract(mv), "frozen_belief": frozen, "endgame_diagnostics": endgames, "status": "complete" if set(model_keys) == set(MODEL_LABELS) else "selected_models_only",
                "models_evaluated": model_keys, "results": results, "paired_bootstrap_tests": paired,
                "history_ablation": ablations, "config": config,
                "dataset_and_training": read_json(output / "dataset/data_summary.json")}
@@ -840,11 +1134,11 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
     return summary
 
 
-def generate_figures(output: Path) -> list[str]:
+def generate_figures(output: Path, *, method_version: str = "v2") -> list[str]:
     from liars_agent.evaluation.plots import (generate_fig1_winrate_svg, generate_fig2_history_ablation_svg,
         generate_fig3_risk_stratified_svg, generate_fig4_calibration_and_profile_svg)
     summary = read_json(output / "experiment_summary.json")
-    require_contract(summary, "experiment summary")
+    require_contract(summary, "experiment summary", method_version=method_version)
     pools = summary["results"]
     items = {}
     for pool in ("seen", "unseen"):
@@ -867,7 +1161,8 @@ def generate_figures(output: Path) -> list[str]:
 
 
 
-def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | None = None) -> None:
+def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | None = None,
+                           method_version: str = "v2") -> None:
     """Validate existing contracts and both task schemas before paid preflight."""
     from liars_agent.training.tinker_train import validate_training_sample
     from liars_agent.training.dataset_release import validate_dataset_release
@@ -881,20 +1176,23 @@ def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | No
     for path in paths:
         if path.exists():
             artifact = read_json(path)
-            require_contract(artifact, str(path))
+            require_contract(artifact, str(path), method_version=method_version)
             if action_supervision_policy is not None and path.name in ("adapter_metadata.json", "trial_metadata.json", "training_progress.json"):
                 from liars_agent.training.action_supervision import require_training_objective
                 require_training_objective(artifact, action_supervision_policy)
     classifier = output / "models/small_classifier_weights.json"
     if classifier.exists():
-        require_contract(read_json(classifier), "classifier weights")
+        require_contract(read_json(classifier), "classifier weights", method_version=method_version)
+    v4_posterior = output / "models/v4_calibrated_posterior.json"
+    if v4_posterior.exists():
+        require_contract(read_json(v4_posterior), "v4 calibrated posterior", method_version=method_version)
     sample_paths = list((output / "dataset").glob("*.jsonl"))
     sample_paths.extend((output / "dataset/batches").glob("samples_*.jsonl"))
     sample_paths.extend(p for p in (output / "dataset/rs_games").glob("game_*.jsonl")
                         if not p.name.endswith(".replay.jsonl") and not p.name.endswith(".points_cache.jsonl"))
     for path in sample_paths:
         for row in read_jsonl(path):
-            validate_training_sample(row, action_supervision_policy=action_supervision_policy)
+            validate_training_sample(row, action_supervision_policy=action_supervision_policy, method_version=method_version)
     split_path = output / "dataset/game_splits.json"
     if split_path.exists():
         partition = read_json(split_path)
@@ -930,7 +1228,8 @@ def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | No
 
 def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: list[str] | None = None,
                  *, max_train_steps: int | None = None) -> dict:
-    require_contract(config, "experiment configuration")
+    mv = config_method_version(config)
+    require_contract(config, "experiment configuration", method_version=mv)
     from liars_agent.training.action_supervision import normalize_action_policy
     policy = normalize_action_policy(config["training"].get("action_supervision"))
     if max_train_steps is not None and stage not in ("sft_trial", "estimate_trial"):
@@ -942,7 +1241,7 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
     snapshot = output / "config.json"
     if snapshot.exists() and read_json(snapshot) != config:
         raise ValueError("This output directory belongs to a different configuration; choose a new directory.")
-    validate_run_artifacts(output, action_supervision_policy=policy)
+    validate_run_artifacts(output, action_supervision_policy=policy, method_version=mv)
     write_json(snapshot, config)
     model_keys = model_keys or (list(MODEL_LABELS) if stage != "local" else ["small_classifier", "rule_counter"])
     if any(key not in MODEL_LABELS for key in model_keys):
@@ -958,7 +1257,7 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
         write_json(status_path, status)
         try:
             needs_api = current in ("sft", "sft_trial", "rs", "preflight") or (current in ("evaluate", "endgame_evaluate") and any(k.startswith("lora") or k == "zero_shot" for k in model_keys))
-            validate_run_artifacts(output, action_supervision_policy=policy)
+            validate_run_artifacts(output, action_supervision_policy=policy, method_version=mv)
             if needs_api and backend is None:
                 backend = make_backend(config, output)
             if current == "preflight":
@@ -985,7 +1284,7 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
             elif current == "endgame_evaluate":
                 evaluate_endgames(config, output, backend, model_keys, required=True)
             elif current == "figures":
-                generate_figures(output)
+                generate_figures(output, method_version=mv)
             status["stages"][current] = "trial_complete" if current == "sft_trial" else "complete"
         except Exception as exc:
             status["stages"][current] = "failed"
@@ -994,7 +1293,8 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
             raise
         status.pop("error", None)
         write_json(status_path, status)
-    ui_config = {"contract": current_contract(), "base_model": config["base_model"], "budget_path": str(ROOT / "outputs/budget_usage.jsonl"),
+    ui_config = {"contract": current_contract(mv), "method_version": mv, "base_model": config["base_model"],
+                 "budget_path": str(ROOT / "outputs/budget_usage.jsonl"),
                  "budget_limit_usd": config["budget_limit_usd"], "sampling": config["sampling"]}
     for key, relative in (("sft_adapter", "models/sft/adapter_metadata.json"), ("rs_adapter", "models/rs/adapter_metadata.json"),
                           ("classifier_weights", "models/small_classifier_weights.json")):
@@ -1028,6 +1328,8 @@ def main() -> None:
     if args.smoke:
         config["dataset"].update(total_target_samples=24, belief_target_samples=24, num_games=12, max_games=24, workers=2, batch_games=6,
                                  rollout_trajectories_per_state=2, min_advantage_margin=0.0)
+        if config_method_version(config) == "adaptive_v4":
+            config["dataset"]["counterfactual_train_pairs"] = 2
         config["evaluation"].update(num_blocks=2, unseen_belief_samples=24, unseen_belief_max_games=12)
     if args.eval_blocks is not None:
         config["evaluation"]["num_blocks"] = args.eval_blocks

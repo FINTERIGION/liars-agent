@@ -1,0 +1,76 @@
+# v4 跨局在线学习对手池配置：
+# - seen_pool: 13 类对称多样化参数原型（覆盖单张/多张对称诈唬、多疑/保守、顺风/逆风变脸及经典记牌）
+# - unseen_pool: 完全未见的极端镜像 Tell 探针 + 局中变脸探针 + 经典记牌
+seen_pool:
+  description: "用于生成 v4 对称多样化自博弈与后验教师数据的 13 类参数化策略原型"
+  agents:
+    - id: "single_tell_trapper"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "single_tell_trapper" }
+    - id: "multi_tell_bluffer"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "multi_tell_bluffer" }
+    - id: "ultra_honest_rock"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "ultra_honest_rock" }
+    - id: "chaotic_maniac"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "chaotic_maniac" }
+    - id: "paranoid_sheriff"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "paranoid_sheriff" }
+    - id: "single_hunter"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "single_hunter" }
+    - id: "balanced_mixed"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "balanced_mixed" }
+    - id: "cautious_single_truth"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "cautious_single_truth" }
+    - id: "pressure_dumper"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "pressure_dumper" }
+    - id: "coward_under_fire"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "coward_under_fire" }
+    - id: "desperate_gambler"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "desperate_gambler" }
+    - id: "mixed_card_trapper"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "mixed_card_trapper" }
+    - id: "card_counter_classic"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "card_counter_classic" }
+
+unseen_pool:
+  description: "未见跨局适应测试池：极端镜像单张诈唬者、极端镜像多张诈唬者、局中变脸探针与经典记牌"
+  agents:
+    - id: "unseen_mirror_single_bluffer"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "unseen_mirror_single_bluffer" }
+    - id: "unseen_mirror_multi_bluffer"
+      class: "ParameterizedArchetypeBot"
+      params: { archetype_id: "unseen_mirror_multi_bluffer" }
+    - id: "unseen_midgame_switcher"
+      class: "MidGameSwitcherBot"
+      params:
+        early_archetype_id: "unseen_mirror_multi_bluffer"
+        late_archetype_id: "unseen_mirror_single_bluffer"
+        switch_round: 4
+    - id: "card_counter"
+      class: "CardCounterBot"
+      params:
+        risk_aversion: 1.0
+        posterior_challenge_cutoff: 0.64
+
+default_matchups:
+  seen_lineup:
+    - "single_tell_trapper"
+    - "multi_tell_bluffer"
+    - "paranoid_sheriff"
+  unseen_lineup:
+    - "unseen_mirror_single_bluffer"
+    - "unseen_mirror_multi_bluffer"
+    - "card_counter"

@@ -9,9 +9,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from liars_agent.agents.base import BaseAgent, public_opponent_profile, describe_action
-from liars_agent.agents.prompt_builder import (SYSTEM_PROMPT, BELIEF_SYSTEM_PROMPT, build_user_prompt,
-    build_bluff_user_prompt, validate_action_decision)
-from liars_agent.contracts import require_contract
+from liars_agent.agents.prompt_builder import (
+    action_prompt_for_method,
+    belief_prompt_for_method,
+    validate_action_decision,
+)
+from liars_agent.contracts import require_contract, require_supported_contract
 from liars_agent.agents.rule_bots import CardCounterBot
 from liars_agent.engine.observation import PlayerObservation
 from liars_agent.engine.types import AgentDecisionRecord, CandidateAction
@@ -66,7 +69,8 @@ class LLMAgent(BaseAgent):
                  model_version: str = "Qwen/Qwen3.5-9B", adapter_path: str | Path | None = None,
                  seed: int = 42, api_base_url: str | None = None, api_key: str | None = None,
                  temperature: float = 0.35, *, backend: Any = None,
-                 max_new_tokens: int = 256, top_p: float = 0.9) -> None:
+                 max_new_tokens: int = 256, top_p: float = 0.9,
+                 method_version: str | None = None) -> None:
         if mode not in ("zero_shot", "lora_sft", "lora_rs_improved", "remote_api"):
             raise ValueError(f"Unknown model mode: {mode}")
         if api_base_url is not None:
@@ -81,6 +85,7 @@ class LLMAgent(BaseAgent):
         self.max_new_tokens = max_new_tokens
         self.adapter_metadata: dict[str, Any] = {}
         self.checkpoint: str | None = None
+        self.method_version: str = method_version or "v2"
         if adapter_path is not None:
             path_text = str(adapter_path)
             if path_text.startswith("tinker://"):
@@ -90,7 +95,10 @@ class LLMAgent(BaseAgent):
                 if path.is_dir():
                     path = path / "adapter_metadata.json"
                 self.adapter_metadata = json.loads(path.read_text(encoding="utf-8"))
-                require_contract(self.adapter_metadata, "adapter metadata")
+                if method_version is not None:
+                    require_contract(self.adapter_metadata, "adapter metadata", method_version=method_version)
+                else:
+                    self.method_version = require_supported_contract(self.adapter_metadata, "adapter metadata")
                 if self.adapter_metadata.get("base_model") != model_version:
                     raise ValueError("Adapter metadata base_model does not match the configured model.")
                 self.checkpoint = self.adapter_metadata.get("sampler_path")
@@ -119,9 +127,10 @@ class LLMAgent(BaseAgent):
     def _score_belief(self, obs: PlayerObservation):
         if obs.last_claim is None:
             return None
+        belief_sys, belief_usr = belief_prompt_for_method(obs, self.method_version)
         score = self.backend.score_bluff(
-            [{"role": "system", "content": BELIEF_SYSTEM_PROMPT},
-             {"role": "user", "content": build_bluff_user_prompt(obs)}], checkpoint=self.checkpoint)
+            [{"role": "system", "content": belief_sys},
+             {"role": "user", "content": belief_usr}], checkpoint=self.checkpoint)
         self.tracker.belief_calls += 1
         self.tracker.api_calls += 2
         self.tracker.total_prompt_tokens += score.prompt_tokens
@@ -173,9 +182,10 @@ class LLMAgent(BaseAgent):
         sample_temp = self.temperature if temperature is None else float(temperature)
         # One independent belief score is shared by this observation's candidates.
         belief = self._score_belief(obs) if include_belief else None
+        action_sys, action_usr = action_prompt_for_method(obs, self.method_version)
         results = self.backend.sample(
-            [{"role": "system", "content": SYSTEM_PROMPT},
-             {"role": "user", "content": build_user_prompt(obs)}],
+            [{"role": "system", "content": action_sys},
+             {"role": "user", "content": action_usr}],
             checkpoint=self.checkpoint, num_samples=num_samples, temperature=sample_temp,
             top_p=self.top_p, max_tokens=self.max_new_tokens,
             seed=self._sampling_seed(obs) if num_samples == 1 else None)

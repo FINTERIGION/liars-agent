@@ -11,6 +11,10 @@ RULES_PROMPT = "你是一名精通《骗子酒馆（Liar's Bar）》博弈的 AI
 SYSTEM_PROMPT = RULES_PROMPT + '\n\n仅输出一行 JSON，且只能包含 chosen_action_id 字段，例如 {"chosen_action_id":"A0"}。动作必须来自当前合法候选列表；不要输出概率、画像或解释。'
 BELIEF_SYSTEM_PROMPT = RULES_PROMPT + '\n\n任务：判断最近一手牌是否含有假牌。仅回答一个数字标签：0 表示全部为真牌，1 表示至少一张假牌。不要输出动作、JSON、概率或解释。'
 
+V4_ADAPTATION_NOTE = "\n9. 完整历史模式下会提供各座位按声称张数（1张 / 2~3张）汇总的公开出牌、亮牌与质疑统计；请结合过往公开亮牌记录动态评估对手倾向，并兼顾当前存活人数与自身左轮风险。"
+SYSTEM_PROMPT_V4 = RULES_PROMPT + V4_ADAPTATION_NOTE + '\n\n仅输出一行 JSON，且只能包含 chosen_action_id 字段，例如 {"chosen_action_id":"A0"}。动作必须来自当前合法候选列表；不要输出概率、画像或解释。'
+BELIEF_SYSTEM_PROMPT_V4 = RULES_PROMPT + V4_ADAPTATION_NOTE + '\n\n任务：结合当前盘面与公开历史亮牌统计，判断最近一手牌是否含有假牌。仅回答一个数字标签：0 表示全部为真牌，1 表示至少一张假牌。不要输出动作、JSON、概率或解释。'
+
 
 def _event_text(event: Any) -> str:
     detail = (f"({event.claimed_count}张{event.claimed_rank},余{event.actor_remaining_cards})"
@@ -18,7 +22,7 @@ def _event_text(event: Any) -> str:
     return f"R{event.round_id}/Step{event.step_id}:Seat{event.actor_seat}->{event.action_type}{detail}"
 
 
-def render_observation(obs: PlayerObservation) -> str:
+def render_observation(obs: PlayerObservation, *, include_count_profile: bool = False) -> str:
     """Same factual context for both tasks; no private run identifier or seed."""
     lines = [f"=== 对局状态 [Round={obs.round_id} | Step={obs.step_id}] ===",
              f"你的座位: Seat {obs.observer_seat} | 本局目标牌: {obs.target_rank} (JOKER视为真牌)",
@@ -39,6 +43,9 @@ def render_observation(obs: PlayerObservation) -> str:
     if obs.ablation_mode != "last_action_only":
         lines.append("本小局公开动作流: " + (" -> ".join(_event_text(e) for e in obs.current_round_history) or "无"))
     if obs.ablation_mode == "full":
+        if include_count_profile:
+            from liars_agent.training.adaptive_opponents import render_count_conditioned_summary
+            lines.append(render_count_conditioned_summary(obs))
         lines.append("过往小局完整公开动作: " + (" ; ".join(_event_text(e) for e in obs.past_public_actions) or "无"))
         lines.append("过往小局亮牌历史: " + (" ; ".join(
             f"R{r.round_id}(目标{r.target_rank}): Seat{r.challenger_seat}质疑Seat{r.claimer_seat}声称{r.claimed_count}张, "
@@ -49,8 +56,8 @@ def render_observation(obs: PlayerObservation) -> str:
     return "\n".join(lines)
 
 
-def build_user_prompt(obs: PlayerObservation) -> str:
-    lines = [render_observation(obs), "可选合法候选动作:"]
+def build_user_prompt(obs: PlayerObservation, *, include_count_profile: bool = False) -> str:
+    lines = [render_observation(obs, include_count_profile=include_count_profile), "可选合法候选动作:"]
     for action in obs.legal_actions:
         detail = "CHALLENGE (质疑上家出牌)" if action.action_type == "CHALLENGE" else f"PLAY {list(action.cards)} (声称打出 {len(action.cards)} 张 {obs.target_rank})"
         lines.append(f"  - {action.action_id}: {detail}")
@@ -58,10 +65,29 @@ def build_user_prompt(obs: PlayerObservation) -> str:
     return "\n".join(lines)
 
 
-def build_bluff_user_prompt(obs: PlayerObservation) -> str:
+def build_bluff_user_prompt(obs: PlayerObservation, *, include_count_profile: bool = False) -> str:
     if obs.last_claim is None:
         raise ValueError("Binary bluff scoring requires a pending claim.")
-    return render_observation(obs) + "\n最近一手是否含假牌？仅回答 0（全真）或 1（诈唬）："
+    return (
+        render_observation(obs, include_count_profile=include_count_profile)
+        + "\n最近一手是否含假牌？仅回答 0（全真）或 1（诈唬）："
+    )
+
+
+def action_prompt_for_method(obs: PlayerObservation, method_version: str = "v2") -> tuple[str, str]:
+    if method_version == "adaptive_v4":
+        return SYSTEM_PROMPT_V4, build_user_prompt(obs, include_count_profile=True)
+    if method_version == "v2":
+        return SYSTEM_PROMPT, build_user_prompt(obs, include_count_profile=False)
+    raise ValueError(f"Unsupported method_version: {method_version}")
+
+
+def belief_prompt_for_method(obs: PlayerObservation, method_version: str = "v2") -> tuple[str, str]:
+    if method_version == "adaptive_v4":
+        return BELIEF_SYSTEM_PROMPT_V4, build_bluff_user_prompt(obs, include_count_profile=True)
+    if method_version == "v2":
+        return BELIEF_SYSTEM_PROMPT, build_bluff_user_prompt(obs, include_count_profile=False)
+    raise ValueError(f"Unsupported method_version: {method_version}")
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

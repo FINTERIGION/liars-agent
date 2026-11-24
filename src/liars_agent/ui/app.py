@@ -16,7 +16,7 @@ from uuid import uuid4
 from liars_agent.agents.base import BaseAgent, describe_action, public_opponent_profile
 from liars_agent.agents.classifier_bot import SmallClassifierBot
 from liars_agent.agents.rule_bots import create_rule_agent
-from liars_agent.contracts import require_contract
+from liars_agent.contracts import require_supported_contract
 from liars_agent.engine.replay import GameReplayBundle, verify_replay_determinism
 from liars_agent.engine.state import LiarsBarEngine
 from liars_agent.engine.types import AgentDecisionRecord, are_cards_truthful, is_card_truthful
@@ -73,7 +73,7 @@ def build_agent_by_spec(spec: str, seed: int = 42) -> BaseAgent:
 
 def configured_agent_factory(config: dict[str, Any]) -> AgentFactory:
     """Share a model service while keeping each player's game state separate."""
-    require_contract(config, "UI model config")
+    method_version = require_supported_contract(config, "UI model config")
     backend = None
     sampling = config.get("sampling", {})
     if sampling.get("fallback_strategy", "card_counter_safe") != "card_counter_safe":
@@ -82,7 +82,7 @@ def configured_agent_factory(config: dict[str, Any]) -> AgentFactory:
     def factory(spec: str, seed: int) -> BaseAgent:
         nonlocal backend
         if spec == "small_classifier":
-            return SmallClassifierBot.load_weights(config["classifier_weights"])
+            return SmallClassifierBot.load_weights(config["classifier_weights"], method_version=method_version)
         if spec not in MODEL_MODES:
             return build_agent_by_spec(spec, seed)
         from liars_agent.agents.llm_agent import LLMAgent
@@ -105,6 +105,7 @@ def configured_agent_factory(config: dict[str, Any]) -> AgentFactory:
             temperature=sampling.get("temperature", 0.2),
             top_p=sampling.get("top_p", 0.9),
             max_new_tokens=sampling.get("max_new_tokens", 256),
+            method_version=method_version,
         )
 
     return factory
