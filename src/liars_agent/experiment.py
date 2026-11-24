@@ -223,6 +223,7 @@ def _extract_v4_action_batch(job: tuple) -> dict:
         "replays_path": batch_meta["replays_path"],
     }
     write_json(completed, result)
+    print(f"[v4 batch {batch_id:04d}] games={result['num_games']}, action={result['num_samples']}, belief={result['num_belief_samples']}", flush=True)
     return result
 
 
@@ -1322,6 +1323,7 @@ def main() -> None:
     parser.add_argument("--target-samples", type=int)
     parser.add_argument("--belief-target-samples", type=int)
     parser.add_argument("--train-games", type=int)
+    parser.add_argument("--workers", type=int)
     parser.add_argument("--seed", type=int)
     args = parser.parse_args()
     config = load_config(args.config)
@@ -1339,6 +1341,8 @@ def main() -> None:
         config["dataset"]["belief_target_samples"] = args.belief_target_samples
     if args.train_games is not None:
         config["dataset"]["num_games"] = args.train_games
+    if args.workers is not None:
+        config["dataset"]["workers"] = args.workers
     if args.seed is not None:
         config["seed"] = args.seed
     output = args.output_dir or ROOT / "outputs/runs" / datetime.now().strftime("%Y%m%d_%H%M%S")
