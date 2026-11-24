@@ -141,6 +141,9 @@ class SampleResult:
     completion_tokens: int
     stop_reason: str
     latency_ms: float
+    prompt_token_ids: tuple[int, ...] | None = None
+    completion_token_ids: tuple[int, ...] | None = None
+    completion_logprobs: tuple[float, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -276,12 +279,13 @@ class TinkerBackend:
                                 (time.perf_counter() - start) * 1000, total_cost)
 
     def sample(self, messages: list[dict[str, str]], *, checkpoint: str | None = None,
+               sampling_client: Any = None,
                num_samples: int = 1, temperature: float = 0.35, top_p: float = 0.9,
                max_tokens: int = 256, seed: int | None = None) -> list[SampleResult]:
         if num_samples < 1 or max_tokens < 1:
             raise ValueError("num_samples and max_tokens must be positive.")
         tokens = self.encode_messages(messages, generation=True)
-        client = self.sampling_client(checkpoint)
+        client = sampling_client if sampling_client is not None else self.sampling_client(checkpoint)
         max_cost = (len(tokens) * num_samples * self.rates["prefill"] +
                     max_tokens * num_samples * self.rates["sample"]) / 1_000_000
         request_id = self.ledger.reserve("sample", max_cost, model=self.base_model,
@@ -297,9 +301,24 @@ class TinkerBackend:
         result = resolve_future(client.sample(prompt=self.sdk.ModelInput.from_ints(tokens),
                                 num_samples=num_samples, sampling_params=self.sdk.SamplingParams(**params)))
         latency = (time.perf_counter() - start) * 1000
-        outputs = [SampleResult(self.tokenizer.decode(s.tokens, skip_special_tokens=True),
-                               len(tokens), len(s.tokens), s.stop_reason, latency / num_samples)
-                   for s in result.sequences]
+        prompt_ids = tuple(int(t) for t in tokens)
+        outputs = [
+            SampleResult(
+                self.tokenizer.decode(s.tokens, skip_special_tokens=True),
+                len(tokens),
+                len(s.tokens),
+                s.stop_reason,
+                latency / num_samples,
+                prompt_token_ids=prompt_ids,
+                completion_token_ids=tuple(int(t) for t in s.tokens),
+                completion_logprobs=(
+                    tuple(float(lp) for lp in s.logprobs)
+                    if getattr(s, "logprobs", None) is not None
+                    else None
+                ),
+            )
+            for s in result.sequences
+        ]
         total_completion = sum(item.completion_tokens for item in outputs)
         cost = (len(tokens) * num_samples * self.rates["prefill"] +
                 total_completion * self.rates["sample"]) / 1_000_000
@@ -310,16 +329,21 @@ class TinkerBackend:
         return outputs
 
     def run_training_batch(self, client: Any, data: list[Any], *,
-                           learning_rate: float | None) -> Any:
+                           learning_rate: float | None,
+                           loss_fn: str = "cross_entropy",
+                           loss_fn_config: dict[str, Any] | None = None,
+                           step_optimizer: bool = True) -> Any:
         token_count = sum(len(item.model_input.to_ints()) for item in data)
         cost = self.estimate_training_cost(token_count)
         request_id = self.ledger.reserve("train" if learning_rate is not None else "validation",
-                                        cost, model=self.base_model, rates=self.rates,
+                                        cost, model=self.base_model, loss_fn=loss_fn, rates=self.rates,
                                         pricing_source=PRICING_SOURCE, pricing_date=PRICING_DATE)
+        fb_kwargs = {"loss_fn_config": loss_fn_config} if loss_fn_config is not None else {}
         if learning_rate is None:
-            result = resolve_future(client.forward(data, "cross_entropy"))
+            result = resolve_future(client.forward(data, loss_fn, **fb_kwargs))
         else:
-            result = resolve_future(client.forward_backward(data, "cross_entropy"))
-            resolve_future(client.optim_step(self.sdk.AdamParams(learning_rate=learning_rate)))
+            result = resolve_future(client.forward_backward(data, loss_fn, **fb_kwargs))
+            if step_optimizer:
+                resolve_future(client.optim_step(self.sdk.AdamParams(learning_rate=learning_rate)))
         self.ledger.complete(request_id, cost, training_tokens=token_count)
         return result

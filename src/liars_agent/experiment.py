@@ -25,6 +25,25 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = ROOT / "configs/sft_qwen35_9b_lora.yaml"
 MODEL_LABELS = {"zero_shot": "Qwen3.5-9B Zero-shot", "small_classifier": "Small classifier",
                 "rule_counter": "Card counter", "lora_sft": "Qwen3.5-9B SFT", "lora_rs": "Qwen3.5-9B RS"}
+OPTIONAL_MODEL_LABELS = {"lora_rl": "Qwen3.5-9B RL"}
+ALL_MODEL_LABELS = {**MODEL_LABELS, **OPTIONAL_MODEL_LABELS}
+DEFAULT_RL_CONFIG = {
+    "loss_fn": "ppo",
+    "num_steps": 30,
+    "groups_per_step": 4,
+    "group_size": 4,
+    "learning_rate": 2.0e-5,
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "win_weight": 0.70,
+    "round_survival_weight": 0.30,
+    "fallback_penalty": -1.0,
+    "clip_advantage": 3.0,
+    "belief_aux_batch_size": 8,
+    "belief_aux_weight": 0.25,
+    "posterior_opponent_prob": 0.25,
+    "checkpoint_every_steps": 10,
+}
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -730,12 +749,96 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
     )
 
 
+def train_rl(config: dict, output: Path, backend) -> dict:
+    from liars_agent.training.tinker_rl import run_tinker_lora_rl
+    mv = config_method_version(config)
+    rl_dir = output / "models/rl"
+    meta_path = rl_dir / "adapter_metadata.json"
+    if meta_path.exists():
+        meta = read_json(meta_path)
+        require_contract(meta, "RL adapter metadata", method_version=mv)
+        if meta.get("formal_training_complete") is True:
+            return meta
+    sft_meta_path = output / "models/sft/adapter_metadata.json"
+    if not sft_meta_path.exists():
+        raise ValueError("RL stage requires completed SFT adapter_metadata.json.")
+    sft_meta = read_json(sft_meta_path)
+    require_contract(sft_meta, "RL source SFT metadata", method_version=mv)
+    if sft_meta.get("formal_training_complete") is not True:
+        raise ValueError("RL requires a completed formal SFT checkpoint.")
+
+    rl_cfg = {**DEFAULT_RL_CONFIG, **config.get("rl", {})}
+    training = config["training"]
+    posterior_opp_prob = float(rl_cfg.get("posterior_opponent_prob", 0.25))
+
+    if mv == "adaptive_v4":
+        from liars_agent.training.adaptive_opponents import ParameterizedArchetypeBot, V4_TRAIN_ARCHETYPES
+        from liars_agent.training.adaptive_teacher import CalibratedPosteriorBelief, PosteriorAdaptiveBot
+        post_path = output / "models/v4_calibrated_posterior.json"
+        cal_belief_fn = CalibratedPosteriorBelief.load(post_path).predict if post_path.exists() else None
+
+        def opp_sampler(group_seed: int):
+            rng = random.Random(group_seed)
+            makers = []
+            for _ in range(3):
+                if posterior_opp_prob > 0 and rng.random() < posterior_opp_prob:
+                    makers.append(lambda s, bfn=cal_belief_fn: PosteriorAdaptiveBot(seed=s, belief_fn=bfn))
+                else:
+                    spec = rng.choice(V4_TRAIN_ARCHETYPES)
+                    makers.append(lambda s, sp=spec: ParameterizedArchetypeBot(sp, seed=s))
+            return makers
+    else:
+        factories = opponent_factories(config)
+
+        def opp_sampler(group_seed: int):
+            order = list(range(3))
+            random.Random(group_seed).shuffle(order)
+            return [factories[i] for i in order]
+
+    belief_path = output / "dataset/belief_train.jsonl"
+    return run_tinker_lora_rl(
+        output_dir=rl_dir,
+        source_metadata=sft_meta,
+        opponent_pool_sampler=opp_sampler,
+        belief_train_path=belief_path if belief_path.exists() else None,
+        base_model=config["base_model"],
+        lora_rank=config["lora"]["r"],
+        train_attn=config["lora"]["train_attn"],
+        train_mlp=config["lora"]["train_mlp"],
+        train_unembed=config["lora"]["train_unembed"],
+        num_steps=int(rl_cfg["num_steps"]),
+        groups_per_step=int(rl_cfg["groups_per_step"]),
+        group_size=int(rl_cfg["group_size"]),
+        learning_rate=float(rl_cfg["learning_rate"]),
+        loss_fn=str(rl_cfg["loss_fn"]),
+        loss_fn_config=rl_cfg.get("loss_fn_config"),
+        temperature=float(rl_cfg["temperature"]),
+        top_p=float(rl_cfg["top_p"]),
+        max_new_tokens=int(config["sampling"]["max_new_tokens"]),
+        max_seq_length=int(training["max_seq_length"]),
+        win_weight=float(rl_cfg["win_weight"]),
+        round_survival_weight=float(rl_cfg["round_survival_weight"]),
+        fallback_penalty=float(rl_cfg["fallback_penalty"]),
+        clip_advantage=float(rl_cfg["clip_advantage"]),
+        belief_aux_batch_size=int(rl_cfg["belief_aux_batch_size"]),
+        belief_aux_weight=float(rl_cfg["belief_aux_weight"]),
+        checkpoint_every_steps=int(rl_cfg["checkpoint_every_steps"]),
+        seed=int(rl_cfg.get("seed", config["seed"])),
+        method_version=mv,
+        budget_path=ROOT / "outputs/budget_usage.jsonl",
+        budget_limit_usd=float(config["budget_limit_usd"]),
+        backend=backend,
+    )
+
+
 def llm_factory(config: dict, output: Path, backend, key: str):
     from liars_agent.agents.llm_agent import LLMAgent
     mv = config_method_version(config)
-    adapter = None if key == "zero_shot" else output / f"models/{'sft' if key == 'lora_sft' else 'rs'}/adapter_metadata.json"
+    subdir_map = {"lora_sft": "sft", "lora_rs": "rs", "lora_rl": "rl"}
+    adapter = None if key == "zero_shot" else output / f"models/{subdir_map[key]}/adapter_metadata.json"
     sampling = config["sampling"]
-    return lambda seed: LLMAgent(name=key, mode="lora_rs_improved" if key == "lora_rs" else key,
+    mode = "lora_rs_improved" if key == "lora_rs" else key
+    return lambda seed: LLMAgent(name=key, mode=mode,
         model_version=config["base_model"], backend=backend, adapter_path=adapter, seed=seed,
         temperature=sampling["temperature"], top_p=sampling["top_p"], max_new_tokens=sampling["max_new_tokens"],
         method_version=mv)
@@ -1093,7 +1196,7 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
             print(f"Evaluation {pool}/{key}: {result.overall_win_rate:.2%}", flush=True)
     paired = {}
     for pool in ("seen", "unseen"):
-        for a, b in (("lora_sft", "zero_shot"), ("lora_rs", "lora_sft"), ("small_classifier", "rule_counter")):
+        for a, b in (("lora_sft", "zero_shot"), ("lora_rs", "lora_sft"), ("lora_rl", "lora_sft"), ("lora_rl", "zero_shot"), ("small_classifier", "rule_counter")):
             if a in results[pool] and b in results[pool]:
                 paired[f"{pool}_{a}_vs_{b}"] = compute_paired_bootstrap_ci(results[pool][a]["block_records"],
                     results[pool][b]["block_records"], config["evaluation"]["bootstrap_samples"], config["seed"])
@@ -1143,7 +1246,7 @@ def generate_figures(output: Path, *, method_version: str = "v2") -> list[str]:
     pools = summary["results"]
     items = {}
     for pool in ("seen", "unseen"):
-        items[pool] = [{"key": key, "label": MODEL_LABELS[key], "win_rate": value["overall_win_rate"],
+        items[pool] = [{"key": key, "label": ALL_MODEL_LABELS[key], "win_rate": value["overall_win_rate"],
                         "ci_95_low": value["win_rate_ci"]["ci_95_low"], "ci_95_high": value["win_rate_ci"]["ci_95_high"], "num_blocks": value["num_blocks"]}
                        for key, value in pools[pool].items()]
     directory = output / "figures"
@@ -1178,7 +1281,7 @@ def validate_run_artifacts(output: Path, *, action_supervision_policy: dict | No
         if path.exists():
             artifact = read_json(path)
             require_contract(artifact, str(path), method_version=method_version)
-            if action_supervision_policy is not None and path.name in ("adapter_metadata.json", "trial_metadata.json", "training_progress.json"):
+            if action_supervision_policy is not None and path.name in ("adapter_metadata.json", "trial_metadata.json", "training_progress.json") and artifact.get("stage") != "rl":
                 from liars_agent.training.action_supervision import require_training_objective
                 require_training_objective(artifact, action_supervision_policy)
     classifier = output / "models/small_classifier_weights.json"
@@ -1245,8 +1348,8 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
     validate_run_artifacts(output, action_supervision_policy=policy, method_version=mv)
     write_json(snapshot, config)
     model_keys = model_keys or (list(MODEL_LABELS) if stage != "local" else ["small_classifier", "rule_counter"])
-    if any(key not in MODEL_LABELS for key in model_keys):
-        raise ValueError(f"Unknown model; choose from {list(MODEL_LABELS)}")
+    if any(key not in ALL_MODEL_LABELS for key in model_keys):
+        raise ValueError(f"Unknown model; choose from {list(ALL_MODEL_LABELS)}")
     if stage == "local" and set(model_keys) - {"small_classifier", "rule_counter"}:
         raise ValueError("The local stage only supports small_classifier and rule_counter; it never calls Tinker.")
     sequence = ["data", "sft_trial", "sft", "rs", "evaluate", "figures"] if stage == "all" else (["data", "evaluate", "figures"] if stage == "local" else [stage])
@@ -1257,7 +1360,7 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
         status["stages"][current] = "running"
         write_json(status_path, status)
         try:
-            needs_api = current in ("sft", "sft_trial", "rs", "preflight") or (current in ("evaluate", "endgame_evaluate") and any(k.startswith("lora") or k == "zero_shot" for k in model_keys))
+            needs_api = current in ("sft", "sft_trial", "rs", "rl", "preflight") or (current in ("evaluate", "endgame_evaluate") and any(k.startswith("lora") or k == "zero_shot" for k in model_keys))
             validate_run_artifacts(output, action_supervision_policy=policy, method_version=mv)
             if needs_api and backend is None:
                 backend = make_backend(config, output)
@@ -1280,6 +1383,8 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
                 if not (output / "dataset/rs_train.jsonl").exists():
                     generate_rs_data(config, output, backend)
                 train_model(config, output, backend, "rs")
+            elif current == "rl":
+                train_rl(config, output, backend)
             elif current == "evaluate":
                 evaluate(config, output, backend, model_keys)
             elif current == "endgame_evaluate":
@@ -1298,6 +1403,7 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
                  "budget_path": str(ROOT / "outputs/budget_usage.jsonl"),
                  "budget_limit_usd": config["budget_limit_usd"], "sampling": config["sampling"]}
     for key, relative in (("sft_adapter", "models/sft/adapter_metadata.json"), ("rs_adapter", "models/rs/adapter_metadata.json"),
+                          ("rl_adapter", "models/rl/adapter_metadata.json"),
                           ("classifier_weights", "models/small_classifier_weights.json")):
         if (output / relative).exists():
             ui_config[key] = str(output / relative)
@@ -1315,7 +1421,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output-dir", type=Path, default=None)
-    parser.add_argument("--stage", choices=("all", "local", "data", "estimate", "estimate_trial", "sft", "sft_trial", "rs", "evaluate", "endgame_evaluate", "figures", "preflight"), default="all")
+    parser.add_argument("--stage", choices=("all", "local", "data", "estimate", "estimate_trial", "sft", "sft_trial", "rs", "rl", "evaluate", "endgame_evaluate", "figures", "preflight"), default="all")
     parser.add_argument("--max-train-steps", type=int, help="Bounded trial only; default 5 steps for sft_trial/estimate_trial")
     parser.add_argument("--models", help="Comma-separated model keys for evaluation")
     parser.add_argument("--smoke", action="store_true", help="Small local data/check sizes; never changes model identities")
