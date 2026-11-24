@@ -109,6 +109,56 @@ class V4AdaptationTests(unittest.TestCase):
         vals_b = evaluate_posterior_teacher_values(obs_bluff, num_rollouts=12, rollout_seed=77)
         self.assertGreater(vals_b["A0"] - vals_t["A0"], 0.15)
 
+    def test_count_bucket_challenges_and_no_suicidal_last_card_bluff(self):
+        # Seat 2 challenges 1-card claims repeatedly and ignores 2-card claims -> single_hunter > paranoid_sheriff
+        statuses = (
+            PlayerPublicInfo(seat=0, alive=True, hand_count=1, shots_taken=1),
+            PlayerPublicInfo(seat=1, alive=True, hand_count=3, shots_taken=1),
+            PlayerPublicInfo(seat=2, alive=False, hand_count=0, shots_taken=6),
+            PlayerPublicInfo(seat=3, alive=False, hand_count=0, shots_taken=6),
+        )
+        past_actions = (
+            PublicEvent(1, 1, 1, "PLAY", 1, "Q", 4),
+            PublicEvent(1, 2, 2, "CHALLENGE", 0, "Q", 5, forced_challenge=False),
+            PublicEvent(2, 1, 1, "PLAY", 1, "K", 4),
+            PublicEvent(2, 2, 2, "CHALLENGE", 0, "K", 5, forced_challenge=False),
+            PublicEvent(3, 1, 1, "PLAY", 2, "A", 3),
+            PublicEvent(3, 2, 2, "PLAY", 2, "A", 3),
+            PublicEvent(4, 1, 1, "PLAY", 2, "Q", 3),
+            PublicEvent(4, 2, 2, "PLAY", 2, "Q", 3),
+        )
+        obs = PlayerObservation(
+            round_id=5, step_id=2, observer_seat=0, target_rank="Q",
+            own_hand=("K",), own_played_cards_this_round=("Q", "Q", "K", "A"),
+            players_public_status=statuses,
+            last_claim=ClaimEvent(5, 1, 1, "Q", 2, 3),
+            current_round_history=(PublicEvent(5, 1, 1, "PLAY", 2, "Q", 3),),
+            past_rounds_history=(
+                RoundResolution(1, "Q", 1, 2, 2, ("Q", "Q"), False, False, 2, 0, 1, False),
+                RoundResolution(2, "K", 1, 2, 2, ("K", "K"), False, False, 2, 1, 2, False),
+            ),
+            legal_actions=(
+                CandidateAction("A0", "CHALLENGE"),
+                CandidateAction("A1", "PLAY", ("K",)),
+            ),
+            past_public_actions=past_actions,
+        )
+        prof2 = extract_count_conditioned_profile(obs)["2"]
+        self.assertEqual((prof2["single_challenges"], prof2["single_challenge_opps"]), (2, 2))
+        self.assertEqual((prof2["multi_challenges"], prof2["multi_challenge_opps"]), (0, 2))
+        summary = render_count_conditioned_summary(obs)
+        self.assertIn("对1张:2/2", summary)
+        self.assertIn("对2~3张:0/2", summary)
+
+        post2 = infer_opponent_posteriors(obs)[2]
+        self.assertGreater(post2["single_hunter"], post2["paranoid_sheriff"])
+
+        # Holding only 1 non-truth card in heads-up (other_active == 1): playing ("K",) empties hand
+        # and triggers a 100% forced challenge -> PosteriorAdaptiveBot must CHALLENGE instead!
+        bot = PosteriorAdaptiveBot(seed=42)
+        act, _ = bot.select_action(obs)
+        self.assertEqual(act.action_type, "CHALLENGE")
+
     def test_posterior_rollout_respects_zero_capacity_impossibility(self):
         # Observer holds 5 truthful Q/JOKER + played 2 Q -> 7 truthful known; only 1 truth left in deck!
         # Claimer claims 2 Q -> mathematically impossible to be truthful (capacity == 0).

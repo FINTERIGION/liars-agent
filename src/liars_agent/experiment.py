@@ -274,7 +274,7 @@ def generate_adaptive_v4_data(config: dict, output: Path) -> dict:
         if not train_belief_pairs:
             raise ValueError("No train-split belief samples available to fit v4 calibrated posterior.")
         calibrated = CalibratedPosteriorBelief()
-        calibrated.fit(train_belief_pairs, lr=0.06, epochs=25)
+        calibrated.fit(train_belief_pairs)
         calibrated.save(posterior_path)
 
     action_jobs = [

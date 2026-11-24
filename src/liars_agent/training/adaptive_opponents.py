@@ -49,240 +49,240 @@ class ArchetypeSpec:
     obs_p_bluff_given_multi: float = 0.45
 
 
-# 12 diverse, symmetric training archetypes covering opposing count-tell directions,
-# challenge styles, and risk sensitivities.
+# 13 diverse, symmetric, non-suicidal training archetypes covering opposing count-tell directions,
+# count-specific challenge hunters, and risk sensitivities.
 V4_TRAIN_ARCHETYPES: tuple[ArchetypeSpec, ...] = (
     ArchetypeSpec(
         archetype_id="single_tell_trapper",
-        description="单张爱诈、2~3张全真（类似当前 LoRA-SFT 牌风）",
-        single_bluff_when_has_truth=0.80,
-        multi_bluff_when_has_truth=0.04,
+        description="单张爱诈、2~3张全真（有真牌优先打2~3张，单张多为诈唬；偏抓多张）",
+        single_bluff_when_has_truth=0.35,
+        multi_bluff_when_has_truth=0.02,
         truth_multi_bias=0.92,
-        bluff_multi_bias=0.05,
-        challenge_threshold=0.62,
-        single_challenge_base=0.18,
-        multi_challenge_base=0.35,
-        obs_p_multi_play=0.65,
-        obs_p_voluntary_challenge=0.22,
-        obs_p_bluff_given_single=0.88,
-        obs_p_bluff_given_multi=0.06,
+        bluff_multi_bias=0.04,
+        challenge_threshold=0.60,
+        single_challenge_base=0.14,
+        multi_challenge_base=0.58,
+        obs_p_multi_play=0.62,
+        obs_p_voluntary_challenge=0.28,
+        obs_p_bluff_given_single=0.86,
+        obs_p_bluff_given_multi=0.05,
     ),
     ArchetypeSpec(
         archetype_id="multi_tell_bluffer",
-        description="镜像风格：2~3张高频诈唬、1张极度诚实",
-        single_bluff_when_has_truth=0.05,
-        multi_bluff_when_has_truth=0.82,
-        truth_multi_bias=0.12,
-        bluff_multi_bias=0.90,
-        challenge_threshold=0.72,
-        single_challenge_base=0.12,
-        multi_challenge_base=0.28,
-        obs_p_multi_play=0.60,
-        obs_p_voluntary_challenge=0.18,
-        obs_p_bluff_given_single=0.10,
+        description="镜像风格：2~3张高频诈唬、1张极度诚实（偏抓单张）",
+        single_bluff_when_has_truth=0.03,
+        multi_bluff_when_has_truth=0.38,
+        truth_multi_bias=0.08,
+        bluff_multi_bias=0.92,
+        challenge_threshold=0.60,
+        single_challenge_base=0.58,
+        multi_challenge_base=0.14,
+        obs_p_multi_play=0.42,
+        obs_p_voluntary_challenge=0.28,
+        obs_p_bluff_given_single=0.08,
         obs_p_bluff_given_multi=0.86,
     ),
     ArchetypeSpec(
         archetype_id="ultra_honest_rock",
         description="极度诚实岩石：有真牌几乎必真，只在0真牌时被迫单张诈唬",
-        single_bluff_when_has_truth=0.03,
+        single_bluff_when_has_truth=0.02,
         multi_bluff_when_has_truth=0.02,
         truth_multi_bias=0.55,
         bluff_multi_bias=0.05,
-        challenge_threshold=0.74,
-        single_challenge_base=0.10,
-        multi_challenge_base=0.25,
+        challenge_threshold=0.70,
+        single_challenge_base=0.12,
+        multi_challenge_base=0.28,
         obs_p_multi_play=0.45,
-        obs_p_voluntary_challenge=0.15,
-        obs_p_bluff_given_single=0.20,
-        obs_p_bluff_given_multi=0.06,
+        obs_p_voluntary_challenge=0.16,
+        obs_p_bluff_given_single=0.22,
+        obs_p_bluff_given_multi=0.05,
     ),
     ArchetypeSpec(
         archetype_id="chaotic_maniac",
-        description="全场疯狗：单张与多张都高频诈唬，极少主动质疑",
-        single_bluff_when_has_truth=0.78,
-        multi_bluff_when_has_truth=0.78,
-        truth_multi_bias=0.65,
-        bluff_multi_bias=0.65,
-        challenge_threshold=0.84,
+        description="激进诈唬手：单张与多张都高频诈唬，极少主动质疑",
+        single_bluff_when_has_truth=0.68,
+        multi_bluff_when_has_truth=0.68,
+        truth_multi_bias=0.60,
+        bluff_multi_bias=0.60,
+        challenge_threshold=0.82,
         single_challenge_base=0.08,
         multi_challenge_base=0.14,
-        obs_p_multi_play=0.65,
+        obs_p_multi_play=0.60,
         obs_p_voluntary_challenge=0.10,
-        obs_p_bluff_given_single=0.82,
-        obs_p_bluff_given_multi=0.82,
+        obs_p_bluff_given_single=0.78,
+        obs_p_bluff_given_multi=0.78,
     ),
     ArchetypeSpec(
         archetype_id="paranoid_sheriff",
-        description="多疑警长：极高质疑倾向（尤其针对多张），自己出牌偏稳",
-        single_bluff_when_has_truth=0.18,
-        multi_bluff_when_has_truth=0.10,
+        description="多张警长：极高多张质疑倾向，对单张相对宽容，自己出牌稳健",
+        single_bluff_when_has_truth=0.12,
+        multi_bluff_when_has_truth=0.06,
         truth_multi_bias=0.45,
-        bluff_multi_bias=0.15,
-        challenge_threshold=0.46,
-        single_challenge_base=0.35,
-        multi_challenge_base=0.72,
-        obs_p_multi_play=0.40,
-        obs_p_voluntary_challenge=0.55,
-        obs_p_bluff_given_single=0.32,
-        obs_p_bluff_given_multi=0.15,
+        bluff_multi_bias=0.12,
+        challenge_threshold=0.52,
+        single_challenge_base=0.16,
+        multi_challenge_base=0.76,
+        obs_p_multi_play=0.42,
+        obs_p_voluntary_challenge=0.44,
+        obs_p_bluff_given_single=0.28,
+        obs_p_bluff_given_multi=0.10,
     ),
     ArchetypeSpec(
         archetype_id="single_hunter",
         description="单张猎手：专抓单张声称，放行多张，自己偏多张真牌",
-        single_bluff_when_has_truth=0.20,
-        multi_bluff_when_has_truth=0.08,
+        single_bluff_when_has_truth=0.14,
+        multi_bluff_when_has_truth=0.06,
         truth_multi_bias=0.75,
-        bluff_multi_bias=0.20,
-        challenge_threshold=0.60,
-        single_challenge_base=0.62,
-        multi_challenge_base=0.15,
-        obs_p_multi_play=0.58,
+        bluff_multi_bias=0.18,
+        challenge_threshold=0.52,
+        single_challenge_base=0.76,
+        multi_challenge_base=0.14,
+        obs_p_multi_play=0.60,
         obs_p_voluntary_challenge=0.42,
-        obs_p_bluff_given_single=0.35,
-        obs_p_bluff_given_multi=0.12,
+        obs_p_bluff_given_single=0.30,
+        obs_p_bluff_given_multi=0.10,
     ),
     ArchetypeSpec(
         archetype_id="balanced_mixed",
         description="均衡混合型：单张与多张均保持中等真假混合，不易被单维度读牌",
-        single_bluff_when_has_truth=0.42,
-        multi_bluff_when_has_truth=0.38,
+        single_bluff_when_has_truth=0.28,
+        multi_bluff_when_has_truth=0.26,
         truth_multi_bias=0.50,
         bluff_multi_bias=0.45,
         challenge_threshold=0.62,
-        single_challenge_base=0.22,
+        single_challenge_base=0.24,
         multi_challenge_base=0.32,
         obs_p_multi_play=0.48,
         obs_p_voluntary_challenge=0.26,
-        obs_p_bluff_given_single=0.48,
-        obs_p_bluff_given_multi=0.42,
+        obs_p_bluff_given_single=0.42,
+        obs_p_bluff_given_multi=0.36,
     ),
     ArchetypeSpec(
         archetype_id="cautious_single_truth",
-        description="慢节奏单张诚实型：偏好打 1 张真牌，极少多出，很少冒险",
-        single_bluff_when_has_truth=0.08,
-        multi_bluff_when_has_truth=0.30,
+        description="慢节奏单张诚实型：偏好打 1 张真牌，极少多出，稳健防守",
+        single_bluff_when_has_truth=0.05,
+        multi_bluff_when_has_truth=0.25,
         truth_multi_bias=0.10,
         bluff_multi_bias=0.10,
-        challenge_threshold=0.70,
-        single_challenge_base=0.14,
-        multi_challenge_base=0.30,
+        challenge_threshold=0.68,
+        single_challenge_base=0.16,
+        multi_challenge_base=0.34,
         obs_p_multi_play=0.14,
-        obs_p_voluntary_challenge=0.18,
-        obs_p_bluff_given_single=0.22,
+        obs_p_voluntary_challenge=0.20,
+        obs_p_bluff_given_single=0.20,
         obs_p_bluff_given_multi=0.35,
     ),
     ArchetypeSpec(
         archetype_id="pressure_dumper",
         description="多张倾泻施压型：有牌就爱打2~3张（真假皆有），制造高张数压力",
-        single_bluff_when_has_truth=0.25,
-        multi_bluff_when_has_truth=0.62,
+        single_bluff_when_has_truth=0.18,
+        multi_bluff_when_has_truth=0.48,
         truth_multi_bias=0.88,
         bluff_multi_bias=0.88,
-        challenge_threshold=0.76,
-        single_challenge_base=0.12,
-        multi_challenge_base=0.22,
+        challenge_threshold=0.72,
+        single_challenge_base=0.14,
+        multi_challenge_base=0.24,
         obs_p_multi_play=0.84,
-        obs_p_voluntary_challenge=0.16,
-        obs_p_bluff_given_single=0.40,
-        obs_p_bluff_given_multi=0.65,
+        obs_p_voluntary_challenge=0.18,
+        obs_p_bluff_given_single=0.35,
+        obs_p_bluff_given_multi=0.60,
     ),
     ArchetypeSpec(
         archetype_id="coward_under_fire",
         description="中枪变怂型：0~1枪高频诈唬，中2+枪后大幅收敛只打真牌",
-        single_bluff_when_has_truth=0.70,
-        multi_bluff_when_has_truth=0.55,
+        single_bluff_when_has_truth=0.52,
+        multi_bluff_when_has_truth=0.42,
         truth_multi_bias=0.50,
         bluff_multi_bias=0.50,
-        challenge_threshold=0.66,
+        challenge_threshold=0.64,
         single_challenge_base=0.20,
         multi_challenge_base=0.32,
-        high_risk_bluff_multiplier=0.15,
+        high_risk_bluff_multiplier=0.12,
         obs_p_multi_play=0.50,
         obs_p_voluntary_challenge=0.24,
-        obs_p_bluff_given_single=0.52,
-        obs_p_bluff_given_multi=0.42,
+        obs_p_bluff_given_single=0.46,
+        obs_p_bluff_given_multi=0.38,
     ),
     ArchetypeSpec(
         archetype_id="desperate_gambler",
         description="逆风赌徒型：低风险偏诚实，中2+枪后变得激进诈唬",
-        single_bluff_when_has_truth=0.15,
-        multi_bluff_when_has_truth=0.15,
+        single_bluff_when_has_truth=0.10,
+        multi_bluff_when_has_truth=0.10,
         truth_multi_bias=0.45,
         bluff_multi_bias=0.65,
         challenge_threshold=0.56,
         single_challenge_base=0.28,
-        multi_challenge_base=0.42,
+        multi_challenge_base=0.44,
         high_risk_bluff_multiplier=3.5,
         obs_p_multi_play=0.52,
         obs_p_voluntary_challenge=0.34,
-        obs_p_bluff_given_single=0.42,
-        obs_p_bluff_given_multi=0.45,
+        obs_p_bluff_given_single=0.38,
+        obs_p_bluff_given_multi=0.42,
     ),
     ArchetypeSpec(
         archetype_id="mixed_card_trapper",
         description="单张诚实+多张混出陷阱型：1张多为真牌，2~3张常真假混出",
-        single_bluff_when_has_truth=0.12,
-        multi_bluff_when_has_truth=0.68,
-        truth_multi_bias=0.25,
-        bluff_multi_bias=0.80,
-        challenge_threshold=0.64,
-        single_challenge_base=0.20,
-        multi_challenge_base=0.38,
-        obs_p_multi_play=0.58,
-        obs_p_voluntary_challenge=0.27,
-        obs_p_bluff_given_single=0.18,
-        obs_p_bluff_given_multi=0.72,
+        single_bluff_when_has_truth=0.06,
+        multi_bluff_when_has_truth=0.48,
+        truth_multi_bias=0.20,
+        bluff_multi_bias=0.84,
+        challenge_threshold=0.62,
+        single_challenge_base=0.42,
+        multi_challenge_base=0.18,
+        obs_p_multi_play=0.52,
+        obs_p_voluntary_challenge=0.28,
+        obs_p_bluff_given_single=0.14,
+        obs_p_bluff_given_multi=0.70,
     ),
     ArchetypeSpec(
         archetype_id="card_counter_classic",
         description="经典记牌稳健型（对齐 v2/v3 CardCounter 行为分布）",
-        single_bluff_when_has_truth=0.30,
-        multi_bluff_when_has_truth=0.12,
+        single_bluff_when_has_truth=0.22,
+        multi_bluff_when_has_truth=0.06,
         truth_multi_bias=0.28,
-        bluff_multi_bias=0.10,
+        bluff_multi_bias=0.08,
         challenge_threshold=0.64,
-        single_challenge_base=0.16,
-        multi_challenge_base=0.34,
-        high_risk_bluff_multiplier=0.35,
+        single_challenge_base=0.18,
+        multi_challenge_base=0.36,
+        high_risk_bluff_multiplier=0.30,
         obs_p_multi_play=0.24,
-        obs_p_voluntary_challenge=0.20,
-        obs_p_bluff_given_single=0.42,
-        obs_p_bluff_given_multi=0.16,
+        obs_p_voluntary_challenge=0.22,
+        obs_p_bluff_given_single=0.38,
+        obs_p_bluff_given_multi=0.14,
     ),
 )
 
-# Unseen probe archetypes (not identical to training archetypes; extreme mirror tells)
+# Unseen probe archetypes (competitive, non-suicidal mirror tells + asymmetric bucket hunters)
 UNSEEN_MIRROR_SINGLE_BLUFFER = ArchetypeSpec(
     archetype_id="unseen_mirror_single_bluffer",
-    description="未见镜像探针 A：1张几乎必诈，2~3张几乎必真",
-    single_bluff_when_has_truth=0.92,
-    multi_bluff_when_has_truth=0.02,
-    truth_multi_bias=0.95,
-    bluff_multi_bias=0.03,
-    challenge_threshold=0.66,
-    single_challenge_base=0.15,
-    multi_challenge_base=0.25,
-    obs_p_multi_play=0.62,
-    obs_p_voluntary_challenge=0.20,
-    obs_p_bluff_given_single=0.94,
-    obs_p_bluff_given_multi=0.04,
+    description="未见镜像竞技探针 A：2~3张几乎必真、1张几乎必诈，且专抓多张声称",
+    single_bluff_when_has_truth=0.32,
+    multi_bluff_when_has_truth=0.01,
+    truth_multi_bias=0.96,
+    bluff_multi_bias=0.02,
+    challenge_threshold=0.58,
+    single_challenge_base=0.10,
+    multi_challenge_base=0.72,
+    obs_p_multi_play=0.65,
+    obs_p_voluntary_challenge=0.32,
+    obs_p_bluff_given_single=0.92,
+    obs_p_bluff_given_multi=0.03,
 )
 
 UNSEEN_MIRROR_MULTI_BLUFFER = ArchetypeSpec(
     archetype_id="unseen_mirror_multi_bluffer",
-    description="未见镜像探针 B：2~3张几乎必诈，1张几乎必真",
-    single_bluff_when_has_truth=0.02,
-    multi_bluff_when_has_truth=0.92,
-    truth_multi_bias=0.05,
-    bluff_multi_bias=0.95,
-    challenge_threshold=0.66,
-    single_challenge_base=0.15,
-    multi_challenge_base=0.25,
-    obs_p_multi_play=0.62,
-    obs_p_voluntary_challenge=0.20,
-    obs_p_bluff_given_single=0.06,
-    obs_p_bluff_given_multi=0.94,
+    description="未见镜像竞技探针 B：1张几乎必真、2~3张几乎必诈，且专抓单张声称",
+    single_bluff_when_has_truth=0.01,
+    multi_bluff_when_has_truth=0.32,
+    truth_multi_bias=0.04,
+    bluff_multi_bias=0.96,
+    challenge_threshold=0.58,
+    single_challenge_base=0.72,
+    multi_challenge_base=0.10,
+    obs_p_multi_play=0.38,
+    obs_p_voluntary_challenge=0.32,
+    obs_p_bluff_given_single=0.04,
+    obs_p_bluff_given_multi=0.92,
 )
 
 ALL_V4_ARCHETYPES: tuple[ArchetypeSpec, ...] = (
@@ -335,9 +335,16 @@ class ParameterizedArchetypeBot(BaseAgent):
         challenge_actions = [a for a in obs.legal_actions if a.action_type == "CHALLENGE"]
         truthful, pure_bluff, mixed_bluff = split_play_actions(obs)
         all_bluffs = pure_bluff + mixed_bluff
+        other_active = sum(
+            1 for p in obs.players_public_status if p.alive and p.hand_count > 0 and p.seat != obs.observer_seat
+        )
+        non_suicidal_bluffs = [
+            a for a in all_bluffs
+            if not (len(a.cards) == len(obs.own_hand) and other_active <= 1)
+        ]
 
         if challenge_actions:
-            if len(obs.legal_actions) == 1:
+            if len(obs.legal_actions) == 1 or (not truthful and not non_suicidal_bluffs):
                 return challenge_actions[0], self._record(obs, bluff_prob, challenge_actions[0])
             assert obs.last_claim is not None
             base_prob = (
@@ -345,9 +352,13 @@ class ParameterizedArchetypeBot(BaseAgent):
                 if obs.last_claim.claimed_count == 1
                 else self.spec.multi_challenge_base
             )
-            if bluff_prob >= self.spec.challenge_threshold or (
-                not truthful and rng.random() < min(0.85, base_prob + 0.15)
-            ) or rng.random() < base_prob * 0.45:
+            # Count-conditioned challenge sensitivity without reckless blind suicide:
+            # hunters with high single/multi_challenge_base lower their threshold sharply on that bucket.
+            eff_cut = self.spec.challenge_threshold - 0.42 * (base_prob - 0.25)
+            if not truthful:
+                eff_cut -= 0.18
+            eff_cut = min(0.92, max(0.28, eff_cut))
+            if bluff_prob >= eff_cut:
                 return challenge_actions[0], self._record(obs, bluff_prob, challenge_actions[0])
 
         mult = self.spec.high_risk_bluff_multiplier if obs.own_shots_taken >= 2 else 1.0
@@ -356,18 +367,17 @@ class ParameterizedArchetypeBot(BaseAgent):
 
         truth_single = [a for a in truthful if len(a.cards) == 1]
         truth_multi = [a for a in truthful if len(a.cards) >= 2]
-        bluff_single = [a for a in all_bluffs if len(a.cards) == 1]
-        bluff_multi = [a for a in all_bluffs if len(a.cards) >= 2]
+        bluff_pool = non_suicidal_bluffs or all_bluffs
+        bluff_single = [a for a in bluff_pool if len(a.cards) == 1]
+        bluff_multi = [a for a in bluff_pool if len(a.cards) >= 2]
 
         # Decide whether to bluff or play truthful when both are available
-        if truthful and all_bluffs:
-            # Determine target count tendency and corresponding bluff probability
+        if truthful and bluff_pool:
             want_multi_if_truth = bool(truth_multi) and rng.random() < self.spec.truth_multi_bias
             want_multi_if_bluff = bool(bluff_multi) and rng.random() < self.spec.bluff_multi_bias
-            # Effective bluff chance depends on preferred bluff bucket
             eff_bluff_prob = p_multi_bluff if want_multi_if_bluff else p_single_bluff
             if rng.random() < eff_bluff_prob:
-                pool = bluff_multi if (want_multi_if_bluff and bluff_multi) else (bluff_single or all_bluffs)
+                pool = bluff_multi if (want_multi_if_bluff and bluff_multi) else (bluff_single or bluff_pool)
                 chosen = rng.choice(pool)
                 return chosen, self._record(obs, bluff_prob if obs.last_claim else None, chosen)
             pool = truth_multi if (want_multi_if_truth and truth_multi) else (truth_single or truthful)
@@ -379,7 +389,7 @@ class ParameterizedArchetypeBot(BaseAgent):
             chosen = rng.choice(pool)
             return chosen, self._record(obs, bluff_prob if obs.last_claim else None, chosen)
 
-        pool = bluff_multi if (bluff_multi and rng.random() < self.spec.bluff_multi_bias) else (bluff_single or all_bluffs)
+        pool = bluff_multi if (bluff_multi and rng.random() < self.spec.bluff_multi_bias) else (bluff_single or bluff_pool)
         chosen = rng.choice(pool) if pool else obs.legal_actions[0]
         return chosen, self._record(obs, bluff_prob if obs.last_claim else None, chosen)
 
@@ -420,6 +430,30 @@ class MidGameSwitcherBot(BaseAgent):
 def extract_count_conditioned_profile(obs: PlayerObservation, recent_window: int = 3) -> dict[str, dict[str, Any]]:
     """Strictly public, count-conditioned per-seat history statistics (no hidden identities)."""
     events = (*obs.past_public_actions, *obs.current_round_history)
+    # Track per-seat voluntary challenge opportunities & actions conditioned on preceding claim size
+    by_seat_ch = {
+        p.seat: {"s_opp": 0, "s_ch": 0, "m_opp": 0, "m_ch": 0}
+        for p in obs.players_public_status
+    }
+    prev_round: int | None = None
+    prev_claimed_count: int | None = None
+    for ev in events:
+        if ev.round_id != prev_round:
+            prev_round = ev.round_id
+            prev_claimed_count = None
+        if ev.step_id > 1 and not ev.forced_challenge and prev_claimed_count is not None:
+            bucket = by_seat_ch.get(ev.actor_seat)
+            if bucket is not None:
+                if prev_claimed_count == 1:
+                    bucket["s_opp"] += 1
+                    if ev.action_type == "CHALLENGE":
+                        bucket["s_ch"] += 1
+                else:
+                    bucket["m_opp"] += 1
+                    if ev.action_type == "CHALLENGE":
+                        bucket["m_ch"] += 1
+        prev_claimed_count = ev.claimed_count if ev.action_type == "PLAY" else None
+
     profile: dict[str, dict[str, Any]] = {}
     for player in obs.players_public_status:
         seat = player.seat
@@ -438,6 +472,7 @@ def extract_count_conditioned_profile(obs: PlayerObservation, recent_window: int
         single_reveals = [r for r in reveals if r.claimed_count == 1]
         multi_reveals = [r for r in reveals if r.claimed_count >= 2]
         recent_reveals = reveals[-recent_window:]
+        ch_b = by_seat_ch[seat]
 
         profile[str(seat)] = {
             "total_plays": len(plays),
@@ -447,6 +482,10 @@ def extract_count_conditioned_profile(obs: PlayerObservation, recent_window: int
             "voluntary_challenges": challs,
             "challenge_opportunities": opps,
             "voluntary_challenge_rate": challs / opps if opps else None,
+            "single_challenges": ch_b["s_ch"],
+            "single_challenge_opps": ch_b["s_opp"],
+            "multi_challenges": ch_b["m_ch"],
+            "multi_challenge_opps": ch_b["m_opp"],
             "challenge_hits": chall_hits,
             "reveals_total": len(reveals),
             "bluffs_total": sum(1 for r in reveals if r.was_bluff),
@@ -471,11 +510,15 @@ def render_count_conditioned_summary(obs: PlayerObservation) -> str:
             continue
         s_rev = f"{s['single_bluffs']}诈/{s['single_reveals']}亮" if s["single_reveals"] else "无亮牌"
         m_rev = f"{s['multi_bluffs']}诈/{s['multi_reveals']}亮" if s["multi_reveals"] else "无亮牌"
-        ch_txt = (
-            f"{s['voluntary_challenges']}/{s['challenge_opportunities']}次(命中{s['challenge_hits']})"
-            if s["challenge_opportunities"]
-            else "0次"
-        )
+        if s["challenge_opportunities"]:
+            ch_txt = (
+                f"{s['voluntary_challenges']}/{s['challenge_opportunities']}次"
+                f"(对1张:{s['single_challenges']}/{s['single_challenge_opps']}, "
+                f"对2~3张:{s['multi_challenges']}/{s['multi_challenge_opps']}, "
+                f"命中{s['challenge_hits']})"
+            )
+        else:
+            ch_txt = "0次"
         lines.append(
             f"  - Seat {seat_str}: 出牌(1张:{s['single_plays']}次, 2~3张:{s['multi_plays']}次) | "
             f"亮牌(1张:{s_rev}, 2~3张:{m_rev}) | 主动质疑:{ch_txt}"

@@ -488,7 +488,7 @@ def main() -> None:
     v4_count_hist_clf.fit(train_belief, lr=0.06, epochs=25)
 
     v4_cal_post = CalibratedPosteriorBelief()
-    v4_cal_post.fit(train_belief, lr=0.06, epochs=25)
+    v4_cal_post.fit(train_belief)
 
     belief_predictors: dict[str, Callable[[PlayerObservation], float]] = {
         "v3_flat_classifier": lambda o: float(v3_flat_clf.predict_bluff_prob(o) or 0.5),

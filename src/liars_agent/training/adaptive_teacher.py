@@ -72,29 +72,45 @@ def infer_opponent_posteriors(
     if not archetypes:
         raise ValueError("archetypes must be non-empty.")
     events = (*obs.past_public_actions, *obs.current_round_history)
+    # Pair each event with the immediately preceding PLAY's claimed_count within the same round
+    annotated_events: list[tuple[PublicEvent, int | None]] = []
+    prev_round: int | None = None
+    prev_claimed_count: int | None = None
+    for ev in events:
+        if ev.round_id != prev_round:
+            prev_round = ev.round_id
+            prev_claimed_count = None
+        annotated_events.append((ev, prev_claimed_count))
+        prev_claimed_count = ev.claimed_count if ev.action_type == "PLAY" else None
+
     posteriors: dict[int, dict[str, float]] = {}
 
     for player in obs.players_public_status:
         seat = player.seat
-        seat_events = [e for e in events if e.actor_seat == seat]
+        seat_events = [(ev, pcc) for ev, pcc in annotated_events if ev.actor_seat == seat]
         seat_reveals = [r for r in obs.past_rounds_history if r.claimer_seat == seat]
 
         log_weights: list[float] = []
         for spec in archetypes:
             lw = 0.0
-            # Likelihood from play-count distribution & voluntary challenge frequency
+            # Likelihood from play-count distribution & count-conditioned voluntary challenge behavior
             n_ev = len(seat_events)
-            for idx, ev in enumerate(seat_events):
+            for idx, (ev, prev_cc) in enumerate(seat_events):
                 w_rec = recency_decay ** (n_ev - 1 - idx)
                 if ev.action_type == "PLAY":
                     p_multi = _clamp(spec.obs_p_multi_play)
                     lw += 0.25 * w_rec * math.log(p_multi if ev.claimed_count >= 2 else (1.0 - p_multi))
-                elif ev.action_type == "CHALLENGE" and not ev.forced_challenge:
-                    p_ch = _clamp(spec.obs_p_voluntary_challenge)
-                    lw += 0.35 * w_rec * math.log(p_ch)
-                if ev.step_id > 1 and not ev.forced_challenge and ev.action_type == "PLAY":
-                    p_ch = _clamp(spec.obs_p_voluntary_challenge)
-                    lw += 0.15 * w_rec * math.log(1.0 - p_ch)
+                if ev.step_id > 1 and not ev.forced_challenge:
+                    if prev_cc == 1:
+                        p_ch = _clamp(spec.single_challenge_base)
+                    elif prev_cc is not None and prev_cc >= 2:
+                        p_ch = _clamp(spec.multi_challenge_base)
+                    else:
+                        p_ch = _clamp(spec.obs_p_voluntary_challenge)
+                    if ev.action_type == "CHALLENGE":
+                        lw += 0.65 * w_rec * math.log(p_ch)
+                    elif ev.action_type == "PLAY":
+                        lw += 0.25 * w_rec * math.log(1.0 - p_ch)
 
             # Strong likelihood from count-conditioned revealed claims
             n_rev = len(seat_reveals)
@@ -322,7 +338,7 @@ class CalibratedPosteriorBelief:
         ent = -sum(v * math.log(max(1e-12, v)) for v in post.values())
         max_ent = math.log(max(2, len(post)))
         conf = max(0.0, min(1.0, 1.0 - ent / max_ent))
-        return base + [_logit(p_bayes) / 3.0, conf]
+        return base + [_logit(p_bayes), conf]
 
     def predict(self, obs: PlayerObservation) -> float:
         if obs.last_claim is None:
@@ -335,19 +351,24 @@ class CalibratedPosteriorBelief:
     def fit(
         self,
         samples: Sequence[tuple[PlayerObservation, int]],
-        lr: float = 0.06,
+        lr: float = 0.04,
         epochs: int = 25,
-        l2: float = 2e-3,
+        l2: float = 5e-3,
     ) -> None:
+        """Fit residual calibration anchored around exact Bayes logit (w[18] regularized toward 1.0)."""
         feats = [(self._features(obs), float(y)) for obs, y in samples]
         w = [0.0] * 20
+        w[18] = 1.0
         for ep in range(epochs):
-            step_lr = lr / (1.0 + 0.08 * ep)
+            step_lr = lr / (1.0 + 0.10 * ep)
             for x, y in feats:
                 p = _sigmoid(sum(wi * xi for wi, xi in zip(w, x)))
                 err = p - y
                 for j in range(len(w)):
-                    w[j] -= step_lr * (err * x[j] + l2 * w[j])
+                    target = 1.0 if j == 18 else 0.0
+                    reg_scale = (l2 * 2.0) if j == 18 else l2
+                    w[j] -= step_lr * (err * x[j] + reg_scale * (w[j] - target))
+            w[18] = max(0.75, min(1.35, w[18]))
         self.weights = w
 
     def save(self, path: str | Path) -> None:
@@ -554,59 +575,78 @@ class PosteriorAdaptiveBot(BaseAgent):
         all_bluffs = pure_bluff + mixed_bluff
 
         num_alive = sum(1 for p in obs.players_public_status if p.alive)
+        other_active = sum(
+            1 for p in obs.players_public_status if p.alive and p.hand_count > 0 and p.seat != obs.observer_seat
+        )
         own_lethal = obs.own_next_shot_lethal_prob
         posteriors = infer_opponent_posteriors(obs, archetypes=self.archetypes, recency_decay=self.recency_decay)
+        prof = extract_count_conditioned_profile(obs)
 
-        # Estimate next active opponent's voluntary challenge tendencies (for play-size adaptation!)
+        # Estimate next active opponent's count-conditioned voluntary challenge tendencies
+        # combining Bayesian archetype posterior + direct Beta-Binomial shrinkage on public events.
         next_seat = _next_active_seat(obs)
         next_single_ch = 0.22
-        next_multi_ch = 0.32
+        next_multi_ch = 0.30
         if next_seat is not None:
             npost = posteriors[next_seat]
-            next_single_ch = sum(npost[aid] * self._spec_by_id[aid].single_challenge_base for aid in npost)
-            next_multi_ch = sum(npost[aid] * self._spec_by_id[aid].multi_challenge_base for aid in npost)
+            prior_s = sum(npost[aid] * self._spec_by_id[aid].single_challenge_base for aid in npost)
+            prior_m = sum(npost[aid] * self._spec_by_id[aid].multi_challenge_base for aid in npost)
+            nprof = prof[str(next_seat)]
+            s_opp, s_ch = nprof["single_challenge_opps"], nprof["single_challenges"]
+            m_opp, m_ch = nprof["multi_challenge_opps"], nprof["multi_challenges"]
+            next_single_ch = (s_ch + 2.0 * prior_s) / (s_opp + 2.0)
+            next_multi_ch = (m_ch + 2.0 * prior_m) / (m_opp + 2.0)
 
-        # Alive-count-coupled challenge threshold:
-        # - In 4-player games, challenging while holding truth cards is a public good (bystanders free-ride).
-        #   Only challenge with truth cards if bluff_prob is overwhelming!
-        # - In 2-player heads-up (zero-sum), exploit inferred opponent tells aggressively.
-        if truthful:
-            if num_alive >= 4:
-                base_cut = 0.80
-            elif num_alive == 3:
-                base_cut = 0.72
+        # Playing a bluff that empties our hand while <=1 other player holds cards triggers
+        # a 100% forced challenge (0% survival); exclude such bluffs whenever CHALLENGE is legal.
+        non_suicidal_bluffs = [
+            a for a in all_bluffs
+            if not (len(a.cards) == len(obs.own_hand) and other_active <= 1)
+        ]
+
+        if challenge_actions:
+            if len(obs.legal_actions) == 1 or (not truthful and not non_suicidal_bluffs):
+                return challenge_actions[0], self._record(obs, bluff_prob, challenge_actions[0])
+
+            # Alive-count-coupled challenge discipline:
+            # - In 3-4p games, challenging while holding truth cards is a public good (bystanders free-ride);
+            #   only challenge with truth cards when bluff certainty is overwhelming or claimer emptied hand.
+            # - In 2p heads-up (zero-sum) or with 0 truth cards, exploit inferred tells sharply.
+            claimer_empty = (obs.last_claim is not None and obs.last_claim.claimer_remaining_cards == 0)
+            if truthful:
+                if num_alive >= 4:
+                    cutoff = 0.92 if not claimer_empty else 0.80
+                elif num_alive == 3:
+                    cutoff = 0.86 if not claimer_empty else 0.72
+                else:
+                    base_cut = 0.58 if len(truthful) == 1 else 0.68
+                    cutoff = base_cut + 0.14 * max(0.0, own_lethal - 1.0 / 6.0)
+                    if claimer_empty:
+                        cutoff -= 0.08
             else:
-                base_cut = 0.56
-            # Extra caution if we have multiple truthful plays or high gun risk
-            cutoff = base_cut + 0.22 * max(0.0, own_lethal - 1.0 / 6.0)
-            if len(truthful) >= 2 and num_alive >= 3:
-                cutoff += 0.05
-        else:
-            # 0 truthful cards: compare challenging now vs bluffing into next_seat
-            # If next_seat challenges a lot, prefer challenging the previous claim instead of bluffing into a sheriff!
-            bluff_risk = min(next_single_ch, next_multi_ch)
-            cutoff = 0.48 - 0.25 * (bluff_risk - 0.20)
-            if num_alive == 2:
-                cutoff -= 0.04
-        cutoff = min(0.93, max(0.32, cutoff))
-
-        if challenge_actions and (len(obs.legal_actions) == 1 or (bluff_prob is not None and bluff_prob >= cutoff)):
-            chosen = challenge_actions[0]
-            return chosen, self._record(obs, bluff_prob, chosen)
+                bluff_risk = min(next_single_ch, next_multi_ch)
+                cutoff = 0.45 - 0.45 * (bluff_risk - 0.20)
+                if num_alive == 2:
+                    cutoff -= 0.08
+            cutoff = min(0.97, max(0.18, cutoff))
+            if bluff_prob is not None and bluff_prob >= cutoff:
+                return challenge_actions[0], self._record(obs, bluff_prob, challenge_actions[0])
 
         # Opponent-aware play selection:
-        # - When playing truthful: bait whichever count-bucket the next seat likes to challenge!
-        # - When forced to bluff: hide in whichever count-bucket the next seat challenges LESS!
+        # - When playing truthful: bait whichever count-bucket the next seat hunts MORE!
+        # - When forced to bluff: hide in whichever count-bucket the next seat hunts LESS!
         if truthful:
             single_t = [a for a in truthful if len(a.cards) == 1]
             multi_t = [a for a in truthful if len(a.cards) >= 2]
             if single_t and multi_t:
-                if own_lethal >= 0.40:
-                    # High risk: prefer dumping multiple truthful cards to clear hand safely / bait
+                if next_multi_ch > next_single_ch + 0.08:
+                    chosen = rng.choice(multi_t)
+                elif next_single_ch > next_multi_ch + 0.08:
+                    chosen = rng.choice(single_t)
+                elif own_lethal >= 0.40:
                     chosen = rng.choice(multi_t) if rng.random() < 0.70 else rng.choice(single_t)
                 elif self.mix_play_style:
-                    # Bait next seat's preferred challenge bucket while retaining mixing
-                    p_multi = 0.50 + max(-0.30, min(0.30, 1.2 * (next_multi_ch - next_single_ch)))
+                    p_multi = 0.50 + max(-0.35, min(0.35, 1.8 * (next_multi_ch - next_single_ch)))
                     chosen = rng.choice(multi_t) if rng.random() < p_multi else rng.choice(single_t)
                 else:
                     chosen = truthful[0]
@@ -614,8 +654,13 @@ class PosteriorAdaptiveBot(BaseAgent):
                 chosen = rng.choice(truthful)
             return chosen, self._record(obs, bluff_prob, chosen)
 
-        single_b = [a for a in all_bluffs if len(a.cards) == 1]
-        chosen = rng.choice(single_b or all_bluffs) if all_bluffs else obs.legal_actions[0]
+        bluff_pool = non_suicidal_bluffs or all_bluffs
+        single_b = [a for a in bluff_pool if len(a.cards) == 1]
+        multi_b = [a for a in bluff_pool if len(a.cards) >= 2]
+        if single_b and multi_b:
+            chosen = rng.choice(multi_b) if next_multi_ch + 0.04 < next_single_ch else rng.choice(single_b)
+        else:
+            chosen = rng.choice(bluff_pool) if bluff_pool else obs.legal_actions[0]
         return chosen, self._record(obs, bluff_prob, chosen)
 
     def _record(
