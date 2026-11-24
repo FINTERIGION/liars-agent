@@ -1,0 +1,17 @@
+base_model: Qwen/Qwen3.5-9B
+budget_limit_usd: 5000
+budget_path: outputs/budget_usage.jsonl
+classifier_weights: results/selfplay_v2_20261113_01_quality_supervision_v3_endgame/models/small_classifier_weights.json
+sft_adapter: results/selfplay_v2_20261113_01_quality_supervision_v3_endgame/models/sft/adapter_metadata.json
+rs_adapter: results/selfplay_v2_20261113_01_quality_supervision_v3_endgame/models/rs/adapter_metadata.json
+contract:
+  decision_schema_version: action_and_binary_belief_v2
+  observation_version: public_history_v2
+  prompt_sha256: e0b53df0f38b526e5c3c614457ba72a98a56187ee5fc24669adfd0d96e8cb78f
+  rules_version: liars_bar_research_v2
+  teacher_version: pool_prior_counter_continuation_v2
+sampling:
+  fallback_strategy: card_counter_safe
+  max_new_tokens: 256
+  temperature: 0.2
+  top_p: 0.9

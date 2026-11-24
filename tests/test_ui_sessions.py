@@ -1,4 +1,6 @@
 import json
+from pathlib import Path
+import tempfile
 import unittest
 from dataclasses import asdict
 from unittest.mock import patch
@@ -6,7 +8,16 @@ from unittest.mock import patch
 from liars_agent.agents.base import BaseAgent
 from liars_agent.agents.rule_bots import CardCounterBot
 from liars_agent.contracts import current_contract
-from liars_agent.ui.app import InteractiveSessionManager, configured_agent_factory, create_ui, build_agent_by_spec
+from liars_agent.ui.app import (
+    InteractiveSessionManager,
+    build_agent_by_spec,
+    configured_agent_factory,
+    create_ui,
+    load_human_game_logs,
+    render_replay_markdown,
+    render_table_html,
+    summarize_human_game_logs,
+)
 
 
 class FailOnceAgent(BaseAgent):
@@ -130,6 +141,43 @@ class SessionTests(unittest.TestCase):
         states = [component for component in demo.config["components"] if component["type"] == "state"]
         self.assertEqual(len(states), 1)
         self.assertIsNone(states[0]["props"].get("value"))
+
+    def test_human_can_sit_in_any_seat_and_rejects_multiple_humans(self):
+        session = InteractiveSessionManager()
+        with self.assertRaisesRegex(ValueError, "At most one seat"):
+            session.start_game(seat0_spec="human", seat2_spec="human", game_seed=7)
+        view = session.start_game(
+            seat0_spec="card_counter",
+            seat1_spec="honest_conservative",
+            seat2_spec="human",
+            seat3_spec="aggressive_bluffer",
+            game_seed=19,
+        )
+        self.assertEqual(session.human_seat, 2)
+        self.assertEqual(view["observation"]["observer_seat"], 2)
+        html_out = render_table_html(view)
+        self.assertIn("Seat 2", html_out)
+        self.assertNotIn("fatal_chamber", html_out)
+        self.finish_human_game(session)
+        replay_md = render_replay_markdown(session.inspect_replay_step(0))
+        self.assertIn("全场真实底牌", replay_md)
+
+    def test_completed_human_game_persists_once_to_jsonl_and_summarizes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log_file = Path(tmp) / "human_games.jsonl"
+            session = InteractiveSessionManager(log_path=log_file)
+            session.start_game(seat0_spec="card_counter", seat1_spec="human", game_seed=31)
+            self.finish_human_game(session)
+            records = load_human_game_logs(log_file)
+            self.assertEqual(len(records), 1)
+            rec = records[0]
+            self.assertEqual(rec["human_seat"], 1)
+            self.assertEqual(rec["game_id"], session.engine.game_id)
+            self.assertTrue(rec["replay_deterministic_verified"])
+            self.assertIn("replay", rec)
+            summary = summarize_human_game_logs(log_file)
+            self.assertIn("真人胜率", summary)
+            self.assertIn("Seat 1", summary)
 
 
 if __name__ == "__main__":

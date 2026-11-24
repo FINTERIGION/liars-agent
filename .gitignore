@@ -6,4 +6,5 @@ __pycache__/
 .env
 outputs/runs/
 outputs/downloads/
+outputs/human_games/
 outputs/budget_usage.jsonl*
