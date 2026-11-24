@@ -1,0 +1,14 @@
+{
+  "contract": {
+    "rules_version": "liars_bar_research_v2",
+    "observation_version": "public_history_v2",
+    "teacher_version": "pool_prior_counter_continuation_v2",
+    "decision_schema_version": "action_and_binary_belief_v2",
+    "prompt_sha256": "e0b53df0f38b526e5c3c614457ba72a98a56187ee5fc24669adfd0d96e8cb78f"
+  },
+  "actual_samples": 2000,
+  "target_samples": 2000,
+  "actual_belief_samples": 2000,
+  "belief_target_samples": 2000,
+  "shortfall": 0
+}

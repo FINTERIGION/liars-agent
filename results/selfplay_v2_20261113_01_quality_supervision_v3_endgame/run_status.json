@@ -1,0 +1,17 @@
+{
+  "stages": {
+    "data": "complete",
+    "estimate": "complete",
+    "estimate_trial": "complete",
+    "endgame_evaluate_local": "complete",
+    "offline_supervision_check": "complete",
+    "sft_trial": "trial_complete",
+    "sft": "complete",
+    "preflight": "complete",
+    "endgame_evaluate": "complete",
+    "rs": "complete",
+    "evaluate": "complete",
+    "figures": "complete"
+  },
+  "real_experiments": "complete"
+}

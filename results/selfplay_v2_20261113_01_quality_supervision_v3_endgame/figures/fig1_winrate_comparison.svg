@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 460" width="860" height="460" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #ffffff;">
+  <title>图1：固定对手池与未见对手池整局胜率及 95% CI 对照</title>
+  <rect width="860" height="460" fill="#ffffff" rx="8"/>
+  <text x="430" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1e293b">图1：固定对手池与未见对手池整局胜率及 95% CI 对照</text>
+  <line x1="90" y1="370" x2="810" y2="370" stroke="#334155" stroke-width="1.5"/>
+  <line x1="90" y1="70" x2="90" y2="370" stroke="#334155" stroke-width="1.5"/>
+  <line x1="90" y1="370" x2="810" y2="370" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="374" text-anchor="end" font-size="12" fill="#475569">0%</text>
+  <line x1="90" y1="337" x2="810" y2="337" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="341" text-anchor="end" font-size="12" fill="#475569">10%</text>
+  <line x1="90" y1="304" x2="810" y2="304" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="308" text-anchor="end" font-size="12" fill="#475569">20%</text>
+  <line x1="90" y1="287" x2="810" y2="287" stroke="#94a3b8" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="80" y="291" text-anchor="end" font-size="12" fill="#475569">25% (四人均分参考)</text>
+  <line x1="90" y1="270" x2="810" y2="270" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="274" text-anchor="end" font-size="12" fill="#475569">30%</text>
+  <line x1="90" y1="237" x2="810" y2="237" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="241" text-anchor="end" font-size="12" fill="#475569">40%</text>
+  <line x1="90" y1="204" x2="810" y2="204" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="208" text-anchor="end" font-size="12" fill="#475569">50%</text>
+  <line x1="90" y1="170" x2="810" y2="170" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="174" text-anchor="end" font-size="12" fill="#475569">60%</text>
+  <line x1="90" y1="137" x2="810" y2="137" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="141" text-anchor="end" font-size="12" fill="#475569">70%</text>
+  <line x1="90" y1="104" x2="810" y2="104" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="108" text-anchor="end" font-size="12" fill="#475569">80%</text>
+  <line x1="90" y1="70" x2="810" y2="70" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+  <text x="80" y="74" text-anchor="end" font-size="12" fill="#475569">90%</text>
+  <rect x="560" y="52" width="14" height="14" fill="#2563eb" rx="2"/>
+  <text x="580" y="64" font-size="13" fill="#1e293b">固定训练对手池 (Seen Pool)</text>
+  <rect x="560" y="74" width="14" height="14" fill="#0d9488" rx="2"/>
+  <text x="580" y="86" font-size="13" fill="#1e293b">含未见对手测试池 (Unseen Pool)</text>
+  <rect x="121" y="361" width="38" height="9" fill="#2563eb" rx="3" opacity="0.9"/>
+  <line x1="140" y1="354" x2="140" y2="369" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="134" y1="354" x2="146" y2="354" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="134" y1="369" x2="146" y2="369" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="140" y="348" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">2.8%</text>
+  <rect x="165" y="356" width="38" height="14" fill="#0d9488" rx="3" opacity="0.9"/>
+  <line x1="184" y1="346" x2="184" y2="365" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="178" y1="346" x2="190" y2="346" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="178" y1="365" x2="190" y2="365" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="184" y="340" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">4.4%</text>
+  <text x="162" y="396" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Qwen3.5-9B Zero-shot</text>
+  <text x="162" y="414" text-anchor="middle" font-size="11" fill="#475569">blocks=45/45</text>
+  <rect x="265" y="252" width="38" height="118" fill="#2563eb" rx="3" opacity="0.9"/>
+  <line x1="284" y1="232" x2="284" y2="272" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="278" y1="232" x2="290" y2="232" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="278" y1="272" x2="290" y2="272" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="284" y="226" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">35.6%</text>
+  <rect x="309" y="209" width="38" height="161" fill="#0d9488" rx="3" opacity="0.9"/>
+  <line x1="328" y1="189" x2="328" y2="230" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="322" y1="189" x2="334" y2="189" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="322" y1="230" x2="334" y2="230" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="328" y="183" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">48.3%</text>
+  <text x="306" y="396" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Small classifier</text>
+  <text x="306" y="414" text-anchor="middle" font-size="11" fill="#475569">blocks=45/45</text>
+  <rect x="409" y="239" width="38" height="131" fill="#2563eb" rx="3" opacity="0.9"/>
+  <line x1="428" y1="219" x2="428" y2="259" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="422" y1="219" x2="434" y2="219" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="422" y1="259" x2="434" y2="259" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="428" y="213" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">39.4%</text>
+  <rect x="453" y="230" width="38" height="140" fill="#0d9488" rx="3" opacity="0.9"/>
+  <line x1="472" y1="206" x2="472" y2="254" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="466" y1="206" x2="478" y2="206" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="466" y1="254" x2="478" y2="254" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="472" y="200" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">42.2%</text>
+  <text x="450" y="396" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Card counter</text>
+  <text x="450" y="414" text-anchor="middle" font-size="11" fill="#475569">blocks=45/45</text>
+  <rect x="553" y="119" width="38" height="251" fill="#2563eb" rx="3" opacity="0.9"/>
+  <line x1="572" y1="102" x2="572" y2="137" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="566" y1="102" x2="578" y2="102" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="566" y1="137" x2="578" y2="137" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="572" y="96" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">75.6%</text>
+  <rect x="597" y="150" width="38" height="220" fill="#0d9488" rx="3" opacity="0.9"/>
+  <line x1="616" y1="126" x2="616" y2="174" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="610" y1="126" x2="622" y2="126" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="610" y1="174" x2="622" y2="174" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="616" y="120" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">66.1%</text>
+  <text x="594" y="396" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Qwen3.5-9B SFT</text>
+  <text x="594" y="414" text-anchor="middle" font-size="11" fill="#475569">blocks=45/45</text>
+  <rect x="697" y="126" width="38" height="244" fill="#2563eb" rx="3" opacity="0.9"/>
+  <line x1="716" y1="108" x2="716" y2="145" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="710" y1="108" x2="722" y2="108" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="710" y1="145" x2="722" y2="145" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="716" y="102" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">73.3%</text>
+  <rect x="741" y="145" width="38" height="225" fill="#0d9488" rx="3" opacity="0.9"/>
+  <line x1="760" y1="122" x2="760" y2="167" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="754" y1="122" x2="766" y2="122" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="754" y1="167" x2="766" y2="167" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="760" y="116" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">67.8%</text>
+  <text x="738" y="396" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">Qwen3.5-9B RS</text>
+  <text x="738" y="414" text-anchor="middle" font-size="11" fill="#475569">blocks=45/45</text>
+</svg>

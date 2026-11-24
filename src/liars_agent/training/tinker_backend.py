@@ -289,7 +289,9 @@ class TinkerBackend:
                                         rates=self.rates, pricing_source=PRICING_SOURCE,
                                         pricing_date=PRICING_DATE)
         params = {"max_tokens": max_tokens, "temperature": temperature, "top_p": top_p}
-        if seed is not None:
+        # Tinker applies a single seed identically to every sequence in a batch;
+        # keep deterministic seeding for single-sample calls and omit it for multi-sample draws.
+        if seed is not None and num_samples == 1:
             params["seed"] = seed
         start = time.perf_counter()
         result = resolve_future(client.sample(prompt=self.sdk.ModelInput.from_ints(tokens),

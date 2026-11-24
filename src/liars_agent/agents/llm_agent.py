@@ -177,7 +177,8 @@ class LLMAgent(BaseAgent):
             [{"role": "system", "content": SYSTEM_PROMPT},
              {"role": "user", "content": build_user_prompt(obs)}],
             checkpoint=self.checkpoint, num_samples=num_samples, temperature=sample_temp,
-            top_p=self.top_p, max_tokens=self.max_new_tokens, seed=self._sampling_seed(obs))
+            top_p=self.top_p, max_tokens=self.max_new_tokens,
+            seed=self._sampling_seed(obs) if num_samples == 1 else None)
         self.tracker.api_calls += 1
         self.tracker.total_calls += len(results)
         self.tracker.total_prompt_tokens += sum(result.prompt_tokens for result in results)

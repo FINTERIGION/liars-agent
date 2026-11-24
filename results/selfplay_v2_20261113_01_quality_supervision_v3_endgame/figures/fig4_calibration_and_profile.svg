@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 490" width="920" height="490" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #ffffff;">
+  <title>图4：诈唬信念概率校准曲线 (左) 与四维策略行为画像 (右)</title>
+  <rect width="920" height="490" fill="#ffffff" rx="8"/>
+  <text x="460" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1e293b">图4：诈唬信念概率校准曲线 (左) 与四维策略行为画像 (右)</text>
+  <rect x="75" y="80" width="320" height="300" fill="#f8fafc" stroke="#cbd5e1"/>
+  <line x1="75" y1="380" x2="395" y2="80" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,5"/>
+  <text x="235" y="414" text-anchor="middle" font-size="12" fill="#334155">模型预测诈唬概率 (Predicted Bluff Prob)</text>
+  <text x="235" y="70" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">LoRA ECE=0.093 vs Zero-Shot ECE=0.252</text>
+  <circle cx="195" cy="380" r="4.5" fill="#ef4444"/>
+  <text x="201" y="375" font-size="10" fill="#ef4444">n=1</text>
+  <circle cx="254" cy="285" r="4.5" fill="#ef4444"/>
+  <text x="260" y="280" font-size="10" fill="#ef4444">n=104</text>
+  <circle cx="306" cy="245" r="4.5" fill="#ef4444"/>
+  <text x="312" y="240" font-size="10" fill="#ef4444">n=756</text>
+  <circle cx="345" cy="173" r="4.5" fill="#ef4444"/>
+  <text x="351" y="168" font-size="10" fill="#ef4444">n=142</text>
+  <polyline fill="none" stroke="#ef4444" stroke-width="2.5" points="195,380 254,285 306,245 345,173"/>
+  <circle cx="180" cy="309" r="4.5" fill="#16a34a"/>
+  <text x="186" y="304" font-size="10" fill="#16a34a">n=507</text>
+  <circle cx="242" cy="189" r="4.5" fill="#16a34a"/>
+  <text x="248" y="184" font-size="10" fill="#16a34a">n=317</text>
+  <circle cx="316" cy="142" r="4.5" fill="#16a34a"/>
+  <text x="322" y="137" font-size="10" fill="#16a34a">n=137</text>
+  <circle cx="343" cy="88" r="4.5" fill="#16a34a"/>
+  <text x="349" y="83" font-size="10" fill="#16a34a">n=42</text>
+  <polyline fill="none" stroke="#16a34a" stroke-width="2.5" points="180,309 242,189 316,142 343,88"/>
+  <circle cx="95" cy="100" r="5" fill="#ef4444"/><text x="107" y="104" font-size="12" fill="#1e293b">Zero-Shot n=1003/1003</text>
+  <circle cx="95" cy="120" r="5" fill="#16a34a"/><text x="107" y="124" font-size="12" fill="#1e293b">LoRA-SFT n=1003/1003</text>
+  <text x="235" y="455" text-anchor="middle" font-size="11" fill="#475569">同一冻结观测集</text>
+  <line x1="480" y1="380" x2="870" y2="380" stroke="#334155" stroke-width="1.5"/>
+  <line x1="480" y1="80" x2="480" y2="380" stroke="#334155" stroke-width="1.5"/>
+  <text x="675" y="70" text-anchor="middle" font-size="13" font-weight="600" fill="#0f172a">四维策略行为画像对比</text>
+  <rect x="492.0" y="353" width="22" height="27" fill="#ef4444" rx="2"/>
+  <text x="503.0" y="348" text-anchor="middle" font-size="10" fill="#1e293b">9%</text>
+  <text x="503.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=627</text>
+  <rect x="517.0" y="293" width="22" height="87" fill="#f59e0b" rx="2"/>
+  <text x="528.0" y="288" text-anchor="middle" font-size="10" fill="#1e293b">29%</text>
+  <text x="528.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=3131</text>
+  <rect x="542.0" y="294" width="22" height="86" fill="#2563eb" rx="2"/>
+  <text x="553.0" y="289" text-anchor="middle" font-size="10" fill="#1e293b">29%</text>
+  <text x="553.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=1602</text>
+  <text x="528" y="412" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">诈唬率</text>
+  <rect x="590.0" y="303" width="22" height="77" fill="#ef4444" rx="2"/>
+  <text x="601.0" y="298" text-anchor="middle" font-size="10" fill="#1e293b">26%</text>
+  <text x="601.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=58</text>
+  <rect x="615.0" y="313" width="22" height="67" fill="#f59e0b" rx="2"/>
+  <text x="626.0" y="308" text-anchor="middle" font-size="10" fill="#1e293b">23%</text>
+  <text x="626.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=918</text>
+  <rect x="640.0" y="379" width="22" height="1" fill="#2563eb" rx="2"/>
+  <text x="651.0" y="374" text-anchor="middle" font-size="10" fill="#1e293b">0%</text>
+  <text x="651.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=460</text>
+  <text x="626" y="412" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">诈唬被抓率</text>
+  <rect x="687.0" y="98" width="22" height="282" fill="#ef4444" rx="2"/>
+  <text x="698.0" y="93" text-anchor="middle" font-size="10" fill="#1e293b">94%</text>
+  <text x="698.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=936</text>
+  <rect x="712.0" y="315" width="22" height="65" fill="#f59e0b" rx="2"/>
+  <text x="723.0" y="310" text-anchor="middle" font-size="10" fill="#1e293b">22%</text>
+  <text x="723.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=3363</text>
+  <rect x="737.0" y="314" width="22" height="66" fill="#2563eb" rx="2"/>
+  <text x="748.0" y="309" text-anchor="middle" font-size="10" fill="#1e293b">22%</text>
+  <text x="748.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=1711</text>
+  <text x="723" y="412" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">主动质疑率</text>
+  <rect x="785.0" y="287" width="22" height="93" fill="#ef4444" rx="2"/>
+  <text x="796.0" y="282" text-anchor="middle" font-size="10" fill="#1e293b">31%</text>
+  <text x="796.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=882</text>
+  <rect x="810.0" y="180" width="22" height="200" fill="#f59e0b" rx="2"/>
+  <text x="821.0" y="175" text-anchor="middle" font-size="10" fill="#1e293b">67%</text>
+  <text x="821.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=738</text>
+  <rect x="835.0" y="260" width="22" height="120" fill="#2563eb" rx="2"/>
+  <text x="846.0" y="255" text-anchor="middle" font-size="10" fill="#1e293b">40%</text>
+  <text x="846.0" y="393" text-anchor="middle" font-size="8" fill="#475569">n=380</text>
+  <text x="821" y="412" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">质疑命中率</text>
+  <rect x="500" y="422" width="12" height="12" fill="#ef4444" rx="2"/>
+  <text x="516" y="432" font-size="12" fill="#334155">Zero-Shot</text>
+  <rect x="620" y="422" width="12" height="12" fill="#f59e0b" rx="2"/>
+  <text x="636" y="432" font-size="12" fill="#334155">Small-Clf</text>
+  <rect x="740" y="422" width="12" height="12" fill="#2563eb" rx="2"/>
+  <text x="756" y="432" font-size="12" fill="#334155">LoRA-SFT</text>
+</svg>

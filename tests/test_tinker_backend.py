@@ -293,15 +293,19 @@ class TestTinkerContracts(unittest.TestCase):
     def test_sampling_consumes_checkpoint_and_counts_exact_tokens(self):
         path = "tinker://run/sampler_weights/sft"
         results = self.backend.sample([{"role": "user", "content": "P"}], checkpoint=path,
-                                      num_samples=2, max_tokens=256)
+                                      num_samples=2, max_tokens=256, seed=123)
         self.assertEqual(len(self.service.sampling_init), 1)
         self.assertEqual(self.service.sampling_init[0]["model_path"], path)
         self.assertFalse(self.service.sampling_init[0]["retry_config"].enable_retry_logic)
+        self.assertFalse(hasattr(self.service.sampling.calls[0]["sampling_params"], "seed"))
         self.assertEqual(len(results), 2)
         usage = self.backend.ledger.snapshot()
         self.assertEqual(usage["prompt_tokens"], 2 * len("<user>P<assistant>"))
         self.assertEqual(usage["completion_tokens"], 2 * len(self.service.sampling.text))
         self.assertEqual(usage["pending_requests"], 0)
+        self.backend.sample([{"role": "user", "content": "P"}], checkpoint=path,
+                            num_samples=1, max_tokens=256, seed=123)
+        self.assertEqual(self.service.sampling.calls[1]["sampling_params"].seed, 123)
 
     def test_bluff_logprobs_share_checkpoint_and_account_full_prefix_twice(self):
         path = "tinker://run/sampler_weights/sft"
@@ -377,6 +381,7 @@ class TestTinkerContracts(unittest.TestCase):
         candidates = agent.sample_candidates(self.obs, num_samples=3)
         self.assertEqual(len(self.service.sampling.logprob_calls), 2)
         self.assertEqual(len(self.service.sampling.calls), 1)
+        self.assertFalse(hasattr(self.service.sampling.calls[0]["sampling_params"], "seed"))
         self.assertEqual(len({r.belief_bluff_prob for _, r in candidates}), 1)
         self.assertEqual(agent.tracker.api_calls, 3)
         self.assertEqual(agent.tracker.belief_calls, 1)

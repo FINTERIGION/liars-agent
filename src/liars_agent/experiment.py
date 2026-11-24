@@ -204,9 +204,11 @@ def trial_settings(config: dict) -> tuple[dict, dict]:
     return verification, sampling
 
 
-def require_verified_trial(config: dict, metadata: dict, splits: dict | None = None) -> None:
+def require_verified_trial(config: dict, metadata: dict, splits: dict | None = None, *,
+                           split_paths: dict[str, Path] | None = None) -> None:
     """A saved trial is usable only if its complete verification actually passed."""
     from liars_agent.training.action_supervision import require_training_objective
+    from liars_agent.training.tinker_train import split_paths_sha256, splits_sha256
     verification, sampling = trial_settings(config)
     require_contract(metadata, "trial metadata")
     require_training_objective(metadata, config["training"].get("action_supervision"))
@@ -225,8 +227,12 @@ def require_verified_trial(config: dict, metadata: dict, splits: dict | None = N
     expected.update(seed=training.get("seed", config["seed"]), warmup_ratio=.05)
     if any(metadata.get("training_metrics", {}).get(key) != value for key, value in expected.items()):
         raise ValueError("Trial training configuration differs from the requested formal training.")
-    if splits is not None:
-        fingerprint = hashlib.sha256(json.dumps(splits, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    fingerprint = None
+    if split_paths is not None:
+        fingerprint = split_paths_sha256(split_paths)
+    elif splits is not None:
+        fingerprint = splits_sha256(splits)
+    if fingerprint is not None:
         if metadata.get("dataset_sha256") != fingerprint or closure.get("dataset_sha256") != fingerprint:
             raise ValueError("Trial was verified with a different dataset.")
 
@@ -423,6 +429,7 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
     is_trial = stage == "sft_trial"
     if not is_trial and max_train_steps is not None:
         raise ValueError("A step limit belongs to the separate sft_trial stage.")
+    split_paths = {key: output / f"dataset/{key}.jsonl" for key in ("train", "val", "test")}
     path = output / f"models/{stage}" / ("trial_metadata.json" if is_trial else "adapter_metadata.json")
     if path.exists():
         metadata = read_json(path)
@@ -431,34 +438,39 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
         if is_trial:
             if metadata.get("max_train_steps") != max_train_steps:
                 raise ValueError("This saved trial has a different step limit; use a new run directory.")
-            cached_splits = {key: list(read_jsonl(output / f"dataset/{key}.jsonl")) for key in ("train", "val", "test")}
-            require_verified_trial(config, metadata, cached_splits)
+            require_verified_trial(config, metadata, split_paths=split_paths)
         return metadata
     ds_summary = read_json(output / "dataset/data_summary.json")
     require_contract(ds_summary, "dataset summary")
     if ds_summary["shortfall"]:
         raise ValueError(f"Dataset shortfall: {ds_summary['shortfall']}; increase num_games in a new run before formal training.")
-    splits = {key: list(read_jsonl(output / f"dataset/{key}.jsonl")) for key in ("train", "val", "test")}
     training = config["training"]
     verification, trial_sampling = trial_settings(config)
     if stage == "sft":
         trial_path = output / "models/sft_trial/trial_metadata.json"
         if not trial_path.exists():
             raise ValueError("Formal SFT requires the passed sft_trial verification on this dataset first.")
-        require_verified_trial(config, read_json(trial_path), splits)
+        require_verified_trial(config, read_json(trial_path), split_paths=split_paths)
     resume_from = None
     resume_metadata = None
     if stage == "rs":
-        splits["train"] = list(read_jsonl(output / "dataset/rs_train.jsonl"))
-        if any(sum(r["task"] == task for r in splits["train"]) < config["rs"][key]
+        split_paths["train"] = output / "dataset/rs_train.jsonl"
+        counts = {"action": 0, "belief": 0}
+        for row in read_jsonl(split_paths["train"]):
+            if row["task"] in counts:
+                counts[row["task"]] += 1
+        if any(counts[task] < config["rs"][key]
                for task, key in (("action", "target_samples"), ("belief", "belief_target_samples"))):
             raise ValueError("RS dataset has not reached its configured target.")
         resume_metadata = read_json(output / "models/sft/adapter_metadata.json")
         require_contract(resume_metadata, "SFT resume checkpoint")
         require_training_objective(resume_metadata, policy)
         resume_from = resume_metadata["state_path"]
+    train_stub = [{"game_id": row["game_id"], "task": row["task"]} for row in read_jsonl(split_paths["train"])]
+    val_rows = list(read_jsonl(split_paths["val"]))
+    splits = {"train": train_stub, "val": val_rows, "test": []}
     return run_tinker_lora_sft(
-        samples=splits["train"] + splits["val"] + splits["test"], splits=splits, output_dir=path.parent,
+        samples=[], splits=splits, split_paths=split_paths, output_dir=path.parent,
         backend=backend, base_model=config["base_model"], lora_rank=config["lora"]["r"],
         learning_rate=config["rs"]["learning_rate"] if stage == "rs" else training["learning_rate"],
         num_epochs=config["rs"]["num_epochs"] if stage == "rs" else training["num_epochs"],

@@ -1,0 +1,183 @@
+{
+  "experiment_name": "qwen35_9b_liars_bar_multitask_v2",
+  "base_model": "Qwen/Qwen3.5-9B",
+  "platform": "tinker",
+  "seed": 42,
+  "budget_limit_usd": 5000,
+  "dataset": {
+    "total_target_samples": 10000,
+    "belief_target_samples": 10000,
+    "num_games": 1000,
+    "max_games": 2000,
+    "workers": 8,
+    "batch_games": 20,
+    "rollout_trajectories_per_state": 8,
+    "min_advantage_margin": 0.05,
+    "split_by": "game_id",
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "history_ablation_augmentation_ratio": 0.0,
+    "endgame_augmentation": {
+      "version": "training_endgame_coverage_v1",
+      "source_run": "/home/rxhgg/liars agent/liars-agent/outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3",
+      "source_files_sha256": {
+        "config.json": "f8a9e8fe0205d8936da6be024f8bea1d6bcf4208a06c6b9c855a8bd25cd8ce68",
+        "dataset/data_summary.json": "62e16f969fd0b96f9d0b7065821bc0ac4b143e8561babcb2634545b4ecefbb91",
+        "dataset/game_splits.json": "fdd890da490a76b0300c5fbf02054e2af59c9055b8773ab2a25adc244d7dbdd7",
+        "dataset/sft_all_samples.jsonl": "99475aa8079c535e85b7b291497686df48569cdd1d5c501088609f5f4eec479e",
+        "models/small_classifier_weights.json": "32de178ae5ca468a50e3029b7690287ecdab73423610784dc1e0e1d037126804",
+        "quality/action_supervision_summary.json": "489694570831ab0cd2d9294cf01fc763354d173f4de082328cea7cf495f2ae75",
+        "dataset/train.jsonl": "58221fbec3d81b4c113beaea75e4bd27862a191855672a909c063c96224df923",
+        "dataset/action_train.jsonl": "c2daf6022914617a7988d35a5fd7cc88eb077183dc61e0cc6d2998db5a5e4fed",
+        "dataset/belief_train.jsonl": "7dd2836e2ef724bb80addd9cf5d232c4ac78e306c8e50e345ddc496165be5df7",
+        "dataset/val.jsonl": "43810e26b865cf37d93a93ba8c6d319c558d51ded4d03e5e4f4ebb4de40d2477",
+        "dataset/action_val.jsonl": "9b932914d63b7624c9c5a0237203ba7f279f6478c1a2011b71ac30da887cc77e",
+        "dataset/belief_val.jsonl": "9de2e3244eed84a6a814a63f57299f8014c72f3c4d8df0c0229dfc1fab45ca24",
+        "dataset/test.jsonl": "10e5f7f23b9526819fc51687b9d53186aabaf1e7dac7e0f76246b2fd1bc3c3bd",
+        "dataset/action_test.jsonl": "eb97975b45ef2fd34e58eb6bb9bfe0c78a2d3f2f7968742e3d74f78cee5a80f5",
+        "dataset/belief_test.jsonl": "25b32297d5626688adadc04cb9d4a12d0044d70e086eed6ef2143cb5a48f0ba9"
+      },
+      "independent_check_dir": "/home/rxhgg/liars agent/liars-agent/outputs/runs/selfplay_v2_20261113_01_quality_supervision_v3/endgame_coverage",
+      "independent_check_files_sha256": {
+        "coverage_report.json": "02ee797f7793682a381f69242eb644e82ecb234015d3b4c3663f6875311cf75d",
+        "labels.jsonl": "6516d06853adc86eb2ff61fb10597c2c9ed823bc5a701b9f1f62159f88ba4dbc",
+        "no_pending_claim.jsonl": "933394a48bb8534f49cf95864c0dd80a00c934fd578e1f3e70f8199f6146e2e1",
+        "observations.jsonl": "5602b9b2a9069fcd73f563fe6cba0c566e68c8e9c7f0788a2d5bc618df9b0b1f",
+        "private/generation_metadata.json": "cc51fb49d391e2bc8a90d4c605b0c891cfe13b843571fa15c7d4cf68b603097c",
+        "private/replays.jsonl": "694dbf1d58b2f4f7312804df7befd0729802b64a4868b414bee5097291c3604b",
+        "private/sample_sources.jsonl": "b4c9e51c71e7550e61d65a11207bfbaf6f2013b7872ec1d08f94a71d66c41f43"
+      },
+      "seed": 2026111407,
+      "samples_per_cell": 20,
+      "min_games_per_cell": 10,
+      "num_rollouts": 64,
+      "max_games": 500,
+      "selection": "truth-balanced endgame actions only; no new belief rows; preserve ordinary-state count by replacement"
+    }
+  },
+  "lora": {
+    "r": 16,
+    "train_attn": true,
+    "train_mlp": true,
+    "train_unembed": false
+  },
+  "training": {
+    "batch_size": 32,
+    "learning_rate": 0.0002,
+    "num_epochs": 3,
+    "max_seq_length": 16384,
+    "seed": 42,
+    "action_supervision": {
+      "version": "empirical_all_answers_weighted_actions_v3",
+      "positive_gap_weight": 0.5,
+      "tie_tolerance": 1e-12,
+      "gap_threshold": 0.05,
+      "target_selection": "all_acceptable_answers_per_state",
+      "answer_weighting": "equal_share_of_state_weight",
+      "action_ending": "first_assistant_eos_inclusive",
+      "action_weight_normalization": "train_mean",
+      "checkpoint_selection": "val_action_set_nll"
+    },
+    "diagnostic_steps": [
+      50,
+      100
+    ],
+    "diagnostic_samples_per_task": 64
+  },
+  "sampling": {
+    "temperature": 0.2,
+    "top_p": 0.9,
+    "max_new_tokens": 256,
+    "fallback_strategy": "card_counter_safe"
+  },
+  "rs": {
+    "target_samples": 2000,
+    "belief_target_samples": 2000,
+    "num_games": 400,
+    "max_games": 2000,
+    "candidates_per_state": 4,
+    "rollouts_per_candidate": 8,
+    "min_advantage_margin": 0.05,
+    "learning_rate": 5e-05,
+    "num_epochs": 1
+  },
+  "evaluation": {
+    "num_blocks": 45,
+    "bootstrap_samples": 10000,
+    "unseen_belief_samples": 1000,
+    "unseen_belief_max_games": 1000,
+    "endgame_coverage_dir": "endgame_coverage"
+  },
+  "opponents": {
+    "seen_pool": {
+      "description": "用于生成 SFT 训练数据及主实验固定对手池评测的 3 类基础策略",
+      "agents": [
+        {
+          "id": "honest_conservative",
+          "class": "HonestConservativeBot",
+          "params": {
+            "challenge_threshold": 0.72
+          }
+        },
+        {
+          "id": "aggressive_bluffer",
+          "class": "AggressiveBlufferBot",
+          "params": {
+            "bluff_rate": 0.65,
+            "multi_card_bias": 0.55,
+            "challenge_threshold": 0.8
+          }
+        },
+        {
+          "id": "card_counter",
+          "class": "CardCounterBot",
+          "params": {
+            "risk_aversion": 1.0,
+            "posterior_challenge_cutoff": 0.64
+          }
+        }
+      ]
+    },
+    "unseen_pool": {
+      "description": "含两类未见对手的混合测试池：多疑猎手型、变色龙自适应型与训练可见的记牌型",
+      "agents": [
+        {
+          "id": "paranoid_hunter",
+          "class": "ParanoidHunterBot",
+          "params": {
+            "multi_claim_challenge_prob": 0.75,
+            "single_claim_challenge_prob": 0.3
+          }
+        },
+        {
+          "id": "chameleon_adaptive",
+          "class": "ChameleonAdaptiveBot",
+          "params": {
+            "high_risk_shots_threshold": 2,
+            "low_risk_bluff_rate": 0.7,
+            "high_risk_bluff_rate": 0.1
+          }
+        }
+      ]
+    },
+    "default_matchups": {
+      "seen_lineup": [
+        "honest_conservative",
+        "aggressive_bluffer",
+        "card_counter"
+      ],
+      "unseen_lineup": [
+        "paranoid_hunter",
+        "chameleon_adaptive",
+        "card_counter"
+      ]
+    }
+  },
+  "contract": {
+    "rules_version": "liars_bar_research_v2",
+    "observation_version": "public_history_v2",
+    "teacher_version": "pool_prior_counter_continuation_v2",
+    "decision_schema_version": "action_and_binary_belief_v2",
+    "prompt_sha256": "e0b53df0f38b526e5c3c614457ba72a98a56187ee5fc24669adfd0d96e8cb78f"
+  }
+}

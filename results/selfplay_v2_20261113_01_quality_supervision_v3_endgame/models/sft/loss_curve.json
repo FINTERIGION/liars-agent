@@ -1,0 +1,290 @@
+[
+  {
+    "epoch": 1,
+    "step": 500,
+    "training_logical_state_visits": {
+      "action": 8000,
+      "belief": 8000
+    },
+    "training_expanded_sequences": {
+      "action": 11609,
+      "belief": 8000
+    },
+    "training_optimizer_steps": 500,
+    "train_action_loss": 0.09439533927152423,
+    "train_belief_loss": 0.6262676387676038,
+    "action_validation": {
+      "num_samples": 1000,
+      "num_candidate_sequences": 10729,
+      "estimated_regret_num_samples": 1000,
+      "mean_candidate_count": 10.729,
+      "action_set_nll": 0.937108847095243,
+      "candidate_normalized_set_probability": 0.6209534929941685,
+      "action_set_accuracy": 0.701,
+      "estimated_regret": 0.029176562500000003,
+      "canonical_mean_token_nll": 0.12165871235708749,
+      "policy": {
+        "version": "empirical_all_answers_weighted_actions_v3",
+        "positive_gap_weight": 0.5,
+        "tie_tolerance": 1e-12,
+        "gap_threshold": 0.05,
+        "target_selection": "all_acceptable_answers_per_state",
+        "answer_weighting": "equal_share_of_state_weight",
+        "action_ending": "first_assistant_eos_inclusive",
+        "action_weight_normalization": "train_mean",
+        "checkpoint_selection": "val_action_set_nll"
+      },
+      "weighting": "equal_per_state_without_ambiguity_weights",
+      "checkpoint_metric": "action_set_nll",
+      "sequence_probability": "exp(sum of answer token logprobs through first assistant EOS, excluding later template separators)",
+      "candidate_probability": "renormalized over the enumerated legal JSON answers only",
+      "action_set_accuracy_prediction": "legal_candidate_argmax; not unconstrained generated actions",
+      "regret_definition": "max stored teacher candidate value minus chosen candidate value; undefined if unavailable",
+      "argmax_tie_break": "first candidate in the legal-action order",
+      "subgroups": {
+        "clear": {
+          "num_samples": 515,
+          "num_candidate_sequences": 5236,
+          "estimated_regret_num_samples": 515,
+          "mean_candidate_count": 10.166990291262136,
+          "action_set_nll": 0.706843656016834,
+          "candidate_normalized_set_probability": 0.6589371023848714,
+          "action_set_accuracy": 0.7961165048543689,
+          "estimated_regret": 0.031744538834951465,
+          "canonical_mean_token_nll": 0.06869744549675719
+        },
+        "tied": {
+          "num_samples": 335,
+          "num_candidate_sequences": 3756,
+          "estimated_regret_num_samples": 335,
+          "mean_candidate_count": 11.211940298507463,
+          "action_set_nll": 0.5899624362955521,
+          "candidate_normalized_set_probability": 0.6723519036839911,
+          "action_set_accuracy": 0.6656716417910448,
+          "estimated_regret": 0.02512126865671642,
+          "canonical_mean_token_nll": 0.15221234947329268
+        },
+        "small_gap": {
+          "num_samples": 150,
+          "num_candidate_sequences": 1737,
+          "estimated_regret_num_samples": 150,
+          "mean_candidate_count": 11.58,
+          "action_set_nll": 2.5029796539170905,
+          "candidate_normalized_set_probability": 0.3757533168788177,
+          "action_set_accuracy": 0.4533333333333333,
+          "estimated_regret": 0.029416666666666664,
+          "canonical_mean_token_nll": 0.23525593901802982
+        },
+        "unscored": {
+          "num_samples": 0,
+          "num_candidate_sequences": 0,
+          "estimated_regret_num_samples": 0,
+          "mean_candidate_count": null,
+          "action_set_nll": null,
+          "candidate_normalized_set_probability": null,
+          "action_set_accuracy": null,
+          "estimated_regret": null,
+          "canonical_mean_token_nll": null
+        }
+      }
+    },
+    "val_action_set_nll": 0.937108847095243,
+    "val_action_canonical_token_nll": 0.12165871235708749,
+    "val_action_loss": 0.937108847095243,
+    "val_belief_loss": 0.6167172317852279,
+    "train_loss": 0.360331489019564,
+    "val_loss": 0.937108847095243
+  },
+  {
+    "epoch": 2,
+    "step": 1000,
+    "training_logical_state_visits": {
+      "action": 8000,
+      "belief": 8000
+    },
+    "training_expanded_sequences": {
+      "action": 11609,
+      "belief": 8000
+    },
+    "training_optimizer_steps": 500,
+    "train_action_loss": 0.06876990278758316,
+    "train_belief_loss": 0.5956609464320354,
+    "action_validation": {
+      "num_samples": 1000,
+      "num_candidate_sequences": 10729,
+      "estimated_regret_num_samples": 1000,
+      "mean_candidate_count": 10.729,
+      "action_set_nll": 0.5258250088244216,
+      "candidate_normalized_set_probability": 0.7400048793679216,
+      "action_set_accuracy": 0.801,
+      "estimated_regret": 0.022762499999999998,
+      "canonical_mean_token_nll": 0.08069081933155903,
+      "policy": {
+        "version": "empirical_all_answers_weighted_actions_v3",
+        "positive_gap_weight": 0.5,
+        "tie_tolerance": 1e-12,
+        "gap_threshold": 0.05,
+        "target_selection": "all_acceptable_answers_per_state",
+        "answer_weighting": "equal_share_of_state_weight",
+        "action_ending": "first_assistant_eos_inclusive",
+        "action_weight_normalization": "train_mean",
+        "checkpoint_selection": "val_action_set_nll"
+      },
+      "weighting": "equal_per_state_without_ambiguity_weights",
+      "checkpoint_metric": "action_set_nll",
+      "sequence_probability": "exp(sum of answer token logprobs through first assistant EOS, excluding later template separators)",
+      "candidate_probability": "renormalized over the enumerated legal JSON answers only",
+      "action_set_accuracy_prediction": "legal_candidate_argmax; not unconstrained generated actions",
+      "regret_definition": "max stored teacher candidate value minus chosen candidate value; undefined if unavailable",
+      "argmax_tie_break": "first candidate in the legal-action order",
+      "subgroups": {
+        "clear": {
+          "num_samples": 515,
+          "num_candidate_sequences": 5236,
+          "estimated_regret_num_samples": 515,
+          "mean_candidate_count": 10.166990291262136,
+          "action_set_nll": 0.619459516110681,
+          "candidate_normalized_set_probability": 0.7189094636405388,
+          "action_set_accuracy": 0.7475728155339806,
+          "estimated_regret": 0.0395191140776699,
+          "canonical_mean_token_nll": 0.06189533221059028
+        },
+        "tied": {
+          "num_samples": 335,
+          "num_candidate_sequences": 3756,
+          "estimated_regret_num_samples": 335,
+          "mean_candidate_count": 11.211940298507463,
+          "action_set_nll": 0.23371075184909967,
+          "candidate_normalized_set_probability": 0.8449118939086669,
+          "action_set_accuracy": 0.9014925373134328,
+          "estimated_regret": 0.0046548507462686566,
+          "canonical_mean_token_nll": 0.10797802228441339
+        },
+        "small_gap": {
+          "num_samples": 150,
+          "num_candidate_sequences": 1737,
+          "estimated_regret_num_samples": 150,
+          "mean_candidate_count": 11.58,
+          "action_set_nll": 0.8567350410531503,
+          "candidate_normalized_set_probability": 0.5781401408909385,
+          "action_set_accuracy": 0.76,
+          "estimated_regret": 0.005671874999999999,
+          "canonical_mean_token_nll": 0.08428057185217698
+        },
+        "unscored": {
+          "num_samples": 0,
+          "num_candidate_sequences": 0,
+          "estimated_regret_num_samples": 0,
+          "mean_candidate_count": null,
+          "action_set_nll": null,
+          "candidate_normalized_set_probability": null,
+          "action_set_accuracy": null,
+          "estimated_regret": null,
+          "canonical_mean_token_nll": null
+        }
+      }
+    },
+    "val_action_set_nll": 0.5258250088244216,
+    "val_action_canonical_token_nll": 0.08069081933155903,
+    "val_action_loss": 0.5258250088244216,
+    "val_belief_loss": 0.6547037200582123,
+    "train_loss": 0.33221542460980924,
+    "val_loss": 0.5258250088244216
+  },
+  {
+    "epoch": 3,
+    "step": 1500,
+    "training_logical_state_visits": {
+      "action": 8000,
+      "belief": 8000
+    },
+    "training_expanded_sequences": {
+      "action": 11609,
+      "belief": 8000
+    },
+    "training_optimizer_steps": 500,
+    "train_action_loss": 0.06560152927643433,
+    "train_belief_loss": 0.588160634726946,
+    "action_validation": {
+      "num_samples": 1000,
+      "num_candidate_sequences": 10729,
+      "estimated_regret_num_samples": 1000,
+      "mean_candidate_count": 10.729,
+      "action_set_nll": 0.35422528171550155,
+      "candidate_normalized_set_probability": 0.7857878843045919,
+      "action_set_accuracy": 0.867,
+      "estimated_regret": 0.00757578125,
+      "canonical_mean_token_nll": 0.06303384709124456,
+      "policy": {
+        "version": "empirical_all_answers_weighted_actions_v3",
+        "positive_gap_weight": 0.5,
+        "tie_tolerance": 1e-12,
+        "gap_threshold": 0.05,
+        "target_selection": "all_acceptable_answers_per_state",
+        "answer_weighting": "equal_share_of_state_weight",
+        "action_ending": "first_assistant_eos_inclusive",
+        "action_weight_normalization": "train_mean",
+        "checkpoint_selection": "val_action_set_nll"
+      },
+      "weighting": "equal_per_state_without_ambiguity_weights",
+      "checkpoint_metric": "action_set_nll",
+      "sequence_probability": "exp(sum of answer token logprobs through first assistant EOS, excluding later template separators)",
+      "candidate_probability": "renormalized over the enumerated legal JSON answers only",
+      "action_set_accuracy_prediction": "legal_candidate_argmax; not unconstrained generated actions",
+      "regret_definition": "max stored teacher candidate value minus chosen candidate value; undefined if unavailable",
+      "argmax_tie_break": "first candidate in the legal-action order",
+      "subgroups": {
+        "clear": {
+          "num_samples": 515,
+          "num_candidate_sequences": 5236,
+          "estimated_regret_num_samples": 515,
+          "mean_candidate_count": 10.166990291262136,
+          "action_set_nll": 0.26293536350517466,
+          "candidate_normalized_set_probability": 0.8387092718447774,
+          "action_set_accuracy": 0.9029126213592233,
+          "estimated_regret": 0.010767597087378641,
+          "canonical_mean_token_nll": 0.02617910337026149
+        },
+        "tied": {
+          "num_samples": 335,
+          "num_candidate_sequences": 3756,
+          "estimated_regret_num_samples": 335,
+          "mean_candidate_count": 11.211940298507463,
+          "action_set_nll": 0.29019672122491585,
+          "candidate_normalized_set_probability": 0.8118634219630355,
+          "action_set_accuracy": 0.8507462686567164,
+          "estimated_regret": 0.004384328358208955,
+          "canonical_mean_token_nll": 0.11241560871855642
+        },
+        "small_gap": {
+          "num_samples": 150,
+          "num_candidate_sequences": 1737,
+          "estimated_regret_num_samples": 150,
+          "mean_candidate_count": 11.58,
+          "action_set_nll": 0.8106511193332648,
+          "candidate_normalized_set_probability": 0.5458557529794308,
+          "action_set_accuracy": 0.78,
+          "estimated_regret": 0.0037447916666666662,
+          "canonical_mean_token_nll": 0.07928253289895663
+        },
+        "unscored": {
+          "num_samples": 0,
+          "num_candidate_sequences": 0,
+          "estimated_regret_num_samples": 0,
+          "mean_candidate_count": null,
+          "action_set_nll": null,
+          "candidate_normalized_set_probability": null,
+          "action_set_accuracy": null,
+          "estimated_regret": null,
+          "canonical_mean_token_nll": null
+        }
+      }
+    },
+    "val_action_set_nll": 0.35422528171550155,
+    "val_action_canonical_token_nll": 0.06303384709124456,
+    "val_action_loss": 0.35422528171550155,
+    "val_belief_loss": 0.5963840936338474,
+    "train_loss": 0.3268810820016902,
+    "val_loss": 0.35422528171550155
+  }
+]
