@@ -1105,7 +1105,7 @@ def evaluate_frozen_beliefs(config, output, backend, model_keys):
             write_json(path, stored)
             predictions[key], results[pool][key] = records, metrics
         results[pool]["paired"] = {}
-        for a, b in (("lora_sft", "zero_shot"), ("lora_rs", "lora_sft"), ("small_classifier", "rule_counter")):
+        for a, b in (("lora_sft", "zero_shot"), ("lora_rs", "lora_sft"), ("lora_rl", "lora_sft"), ("lora_rl", "zero_shot"), ("small_classifier", "rule_counter")):
             if a in predictions and b in predictions:
                 results[pool]["paired"][f"{a}_vs_{b}"] = compute_paired_probability_metrics(predictions[a], predictions[b],
                     config["evaluation"]["bootstrap_samples"], config["seed"])
@@ -1177,7 +1177,8 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
                 factory = llm_factory(config, output, backend, key)
                 metadata = {"backend": "tinker", "base_model": config["base_model"]}
                 if key != "zero_shot":
-                    metadata.update(read_json(output / f"models/{'sft' if key == 'lora_sft' else 'rs'}/adapter_metadata.json"))
+                    subdir_map = {"lora_sft": "sft", "lora_rs": "rs", "lora_rl": "rl"}
+                    metadata.update(read_json(output / f"models/{subdir_map[key]}/adapter_metadata.json"))
             result = run_duplicate_evaluation(factory, opponent_factories(config, pool),
                 num_blocks=config["evaluation"]["num_blocks"], base_seed=config["seed"] + (1000 if pool == "seen" else 5000),
                 pool_name=f"{pool}_pool", model_metadata=metadata, opponent_specs=opponent_specs(config, pool),
