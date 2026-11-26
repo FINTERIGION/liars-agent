@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 
 import tinker
@@ -20,6 +21,7 @@ from liars_agent.training.tinker_rl import (
     RLStepRecord,
     build_rl_datum,
     compute_group_relative_advantages,
+    compute_step_returns,
     run_tinker_lora_rl,
 )
 
@@ -74,12 +76,14 @@ class _FakePathResp:
 
 
 class _FakeSamplingClient:
-    def __init__(self, call_counter: list[int]) -> None:
+    def __init__(self, call_counter: list[int], lock: threading.Lock | None = None) -> None:
         self.call_counter = call_counter
+        self._lock = lock or threading.Lock()
 
     def sample(self, *, prompt, num_samples: int, sampling_params):
-        idx = self.call_counter[0]
-        self.call_counter[0] += 1
+        with self._lock:
+            idx = self.call_counter[0]
+            self.call_counter[0] += 1
         # Alternate between A0 (CHALLENGE) and A1 (PLAY) so paired rollouts exhibit genuine variance
         toks = [20, 21, 22, 2] if (idx % 2 == 0) else [20, 21, 23, 2]
         return _FakeSampleResponse([_FakeSeq(tokens=toks, logprobs=[-0.4, -0.3, -0.2, -0.1]) for _ in range(num_samples)])
@@ -89,6 +93,7 @@ class _FakeTrainingClient:
     def __init__(self, call_log: list[tuple[str, str]], sample_counter: list[int]) -> None:
         self.call_log = call_log
         self.sample_counter = sample_counter
+        self._lock = threading.Lock()
 
     def forward_backward(self, data, loss_fn: str, **kwargs):
         self.call_log.append(("forward_backward", loss_fn))
@@ -100,7 +105,7 @@ class _FakeTrainingClient:
 
     def save_weights_and_get_sampling_client(self):
         self.call_log.append(("refresh_sampler", "inflight"))
-        return _FakeSamplingClient(self.sample_counter)
+        return _FakeSamplingClient(self.sample_counter, self._lock)
 
     def save_state(self, name: str):
         self.call_log.append(("save_state", name))
@@ -282,6 +287,115 @@ class TinkerRLTests(unittest.TestCase):
             )
             self.assertEqual(meta_resumed["summary"]["total_steps"], 3)
             self.assertTrue(any(op == "from_state_with_optimizer" for op, _ in resume_log))
+
+    def test_compute_step_returns_discounting_and_shaping(self):
+        # Round 1 voluntary caught bluff (had_truth_card=True) vs Round 3 successful challenge
+        st_early_bluff = RLStepRecord(
+            1, 1, (1, 2), (20, 2), (-0.4, -0.1), "PLAY", False,
+            was_bluff_play=True, had_truth_card=True, caught_bluff_this_round=True,
+        )
+        st_forced_bluff = RLStepRecord(
+            2, 1, (1, 2), (20, 2), (-0.4, -0.1), "PLAY", False,
+            was_bluff_play=True, had_truth_card=False, caught_bluff_this_round=True,
+        )
+        st_late_hit = RLStepRecord(
+            3, 2, (1, 2), (20, 2), (-0.4, -0.1), "CHALLENGE", False,
+            challenge_succeeded=True, had_truth_card=True,
+        )
+        ep = RLEpisodeResult(
+            game_id="g_shape",
+            seat=0,
+            won=True,
+            round_penalized_seat={1: 0, 2: 0, 3: 1},
+            steps=(st_early_bluff, st_forced_bluff, st_late_hit),
+        )
+        returns = compute_step_returns(
+            ep,
+            win_weight=0.70,
+            round_survival_weight=0.30,
+            gamma=0.90,
+            challenge_hit_bonus=0.15,
+            caught_bluff_penalty=-0.20,
+        )
+        # Round 1: 0.70 * 0.90^2 + 0.0 - 0.20 = 0.367 (penalized + caught voluntary bluff)
+        # Round 2: 0.70 * 0.90^1 + 0.0 (penalized, no caught_bluff_penalty because had_truth_card=False) = 0.63
+        # Round 3: 0.70 * 0.90^0 + 0.30 + 0.15 = 1.15 (survived + challenge hit bonus)
+        self.assertAlmostEqual(returns[0], 0.70 * 0.81 - 0.20, places=5)
+        self.assertAlmostEqual(returns[1], 0.70 * 0.90, places=5)
+        self.assertAlmostEqual(returns[2], 0.70 + 0.30 + 0.15, places=5)
+        self.assertGreater(returns[2], returns[1])
+        self.assertGreater(returns[1], returns[0])
+
+    def test_run_tinker_lora_rl_v2_on_policy_belief_concurrent_and_val_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            replays = generate_adaptive_v4_replays(4, base_seed=20261124)
+            belief_rows = extract_v4_belief_samples(replays, target_samples=12, seed=42)
+            belief_path = root / "belief_train.jsonl"
+            belief_path.write_text(
+                "\n".join(json.dumps(r, ensure_ascii=False) for r in belief_rows) + "\n",
+                encoding="utf-8",
+            )
+            source_meta = {
+                "contract": current_contract("adaptive_v4"),
+                "base_model": "Qwen/Qwen3.5-9B",
+                "state_path": "tinker://mock-sft:train:0/weights/sft-epoch-3",
+                "sampler_path": "tinker://mock-sft:train:0/sampler_weights/sft-best-epoch-3",
+                "lora_config": {"r": 16, "train_attn": True, "train_mlp": True, "train_unembed": False},
+                "formal_training_complete": True,
+            }
+            call_log: list[tuple[str, str]] = []
+            backend = _make_mock_backend(root / "budget.jsonl", call_log, [0])
+            opp_sampler = lambda s: [
+                lambda sd, sp=V4_TRAIN_ARCHETYPES[i]: ParameterizedArchetypeBot(sp, seed=sd)
+                for i in range(3)
+            ]
+            rl_v2_dir = root / "models/rl_v2"
+            meta = run_tinker_lora_rl(
+                output_dir=rl_v2_dir,
+                source_metadata=source_meta,
+                opponent_pool_sampler=opp_sampler,
+                eval_opponent_sampler=opp_sampler,
+                belief_train_path=belief_path,
+                num_steps=2,
+                groups_per_step=1,
+                group_size=2,
+                gamma=0.90,
+                challenge_hit_bonus=0.15,
+                caught_bluff_penalty=-0.20,
+                belief_aux_batch_size=4,
+                belief_aux_weight=0.25,
+                on_policy_belief_ratio=0.50,
+                rollout_workers=2,
+                eval_every_steps=1,
+                eval_blocks=1,
+                eval_temperature=0.2,
+                checkpoint_every_steps=1,
+                seed=99,
+                method_version="adaptive_v4",
+                stage_name="rl_v2",
+                backend=backend,
+            )
+            self.assertEqual(meta["stage"], "rl")
+            self.assertEqual(meta["rl_variant"], "rl_v2")
+            self.assertIsNotNone(meta["best_checkpoint"])
+            self.assertEqual(meta["sampler_path"], meta["best_checkpoint"]["sampler_path"])
+            self.assertTrue(meta["final_sampler_path"].startswith("tinker://"))
+
+            metric_rows = [json.loads(line) for line in (rl_v2_dir / "rl_metrics.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(metric_rows), 2)
+            self.assertTrue(all(r["validation"] is not None for r in metric_rows))
+            self.assertTrue(any(r["on_policy_beliefs_used"] > 0 for r in metric_rows))
+
+            v2_agent = LLMAgent(
+                name="lora_rl_v2",
+                mode="lora_rl_v2",
+                model_version="Qwen/Qwen3.5-9B",
+                adapter_path=rl_v2_dir / "adapter_metadata.json",
+                backend=backend,
+                method_version="adaptive_v4",
+            )
+            self.assertEqual(v2_agent.checkpoint, meta["sampler_path"])
 
 
 if __name__ == "__main__":

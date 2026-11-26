@@ -19,7 +19,7 @@ from liars_agent.agents.rule_bots import CardCounterBot
 from liars_agent.engine.observation import PlayerObservation
 from liars_agent.engine.types import AgentDecisionRecord, CandidateAction
 
-ModelMode = Literal["zero_shot", "lora_sft", "lora_rs_improved", "lora_rl", "remote_api"]
+ModelMode = Literal["zero_shot", "lora_sft", "lora_rs_improved", "lora_rl", "lora_rl_v2", "remote_api"]
 
 
 @dataclass
@@ -71,7 +71,7 @@ class LLMAgent(BaseAgent):
                  temperature: float = 0.35, *, backend: Any = None,
                  max_new_tokens: int = 256, top_p: float = 0.9,
                  method_version: str | None = None) -> None:
-        if mode not in ("zero_shot", "lora_sft", "lora_rs_improved", "lora_rl", "remote_api"):
+        if mode not in ("zero_shot", "lora_sft", "lora_rs_improved", "lora_rl", "lora_rl_v2", "remote_api"):
             raise ValueError(f"Unknown model mode: {mode}")
         if api_base_url is not None:
             raise ValueError("This agent uses the Tinker SDK; api_base_url is not a chat-completions endpoint.")
@@ -104,7 +104,7 @@ class LLMAgent(BaseAgent):
                 self.checkpoint = self.adapter_metadata.get("sampler_path")
             if not isinstance(self.checkpoint, str) or not self.checkpoint.startswith("tinker://") or "/sampler_weights/" not in self.checkpoint:
                 raise ValueError("Adapter must contain a real Tinker sampler_path.")
-        if mode in ("lora_sft", "lora_rs_improved", "lora_rl") and not self.checkpoint:
+        if mode in ("lora_sft", "lora_rs_improved", "lora_rl", "lora_rl_v2") and not self.checkpoint:
             raise ValueError(f"{mode} requires a trained adapter checkpoint.")
         if mode == "zero_shot" and self.checkpoint:
             raise ValueError("zero_shot cannot load a trained checkpoint.")

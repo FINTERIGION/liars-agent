@@ -187,6 +187,8 @@ class TinkerBackend:
         self._service = service_client
         self._sampling_clients: dict[str, Any] = {}
         self._tokenizer: Any = None
+        self._tok_lock = threading.RLock()
+        self._client_lock = threading.RLock()
         self._preflight_done = service_client is not None
 
     def preflight(self) -> dict[str, Any]:
@@ -212,28 +214,31 @@ class TinkerBackend:
         key = checkpoint or self.base_model
         if checkpoint is not None and (not checkpoint.startswith("tinker://") or "/sampler_weights/" not in checkpoint):
             raise ValueError("Inference requires a tinker://.../sampler_weights/... checkpoint.")
-        if fresh or key not in self._sampling_clients:
-            from tinker.lib.retry_handler import RetryConfig
+        with self._client_lock:
+            if fresh or key not in self._sampling_clients:
+                from tinker.lib.retry_handler import RetryConfig
 
-            kwargs = {"model_path": checkpoint} if checkpoint else {"base_model": self.base_model}
-            # The SDK's outer retry repeats a completed/failed sampling request
-            # with a new sequence ID. One budget reservation must cover only one
-            # such request; uncertain failures remain reserved for reconciliation.
-            kwargs["retry_config"] = RetryConfig(enable_retry_logic=False)
-            self._sampling_clients[key] = resolve_future(self.service.create_sampling_client(**kwargs))
-        return self._sampling_clients[key]
+                kwargs = {"model_path": checkpoint} if checkpoint else {"base_model": self.base_model}
+                # The SDK's outer retry repeats a completed/failed sampling request
+                # with a new sequence ID. One budget reservation must cover only one
+                # such request; uncertain failures remain reserved for reconciliation.
+                kwargs["retry_config"] = RetryConfig(enable_retry_logic=False)
+                self._sampling_clients[key] = resolve_future(self.service.create_sampling_client(**kwargs))
+            return self._sampling_clients[key]
 
     @property
     def tokenizer(self) -> Any:
-        if self._tokenizer is None:
-            # Tokenization and cost estimation do not need a paid API session.
-            from transformers import AutoTokenizer
-            self._tokenizer = AutoTokenizer.from_pretrained(self.base_model)
-        return self._tokenizer
+        with self._tok_lock:
+            if self._tokenizer is None:
+                # Tokenization and cost estimation do not need a paid API session.
+                from transformers import AutoTokenizer
+                self._tokenizer = AutoTokenizer.from_pretrained(self.base_model)
+            return self._tokenizer
 
     def encode_messages(self, messages: list[dict[str, str]], *, generation: bool) -> list[int]:
-        return list(self.tokenizer.apply_chat_template(messages, tokenize=True,
-                    add_generation_prompt=generation, enable_thinking=False, return_dict=False))
+        with self._tok_lock:
+            return list(self.tokenizer.apply_chat_template(messages, tokenize=True,
+                        add_generation_prompt=generation, enable_thinking=False, return_dict=False))
 
     def estimate_training_cost(self, tokens: int) -> float:
         return tokens * self.rates["train"] / 1_000_000
@@ -302,9 +307,11 @@ class TinkerBackend:
                                 num_samples=num_samples, sampling_params=self.sdk.SamplingParams(**params)))
         latency = (time.perf_counter() - start) * 1000
         prompt_ids = tuple(int(t) for t in tokens)
+        with self._tok_lock:
+            decoded_texts = [self.tokenizer.decode(s.tokens, skip_special_tokens=True) for s in result.sequences]
         outputs = [
             SampleResult(
-                self.tokenizer.decode(s.tokens, skip_special_tokens=True),
+                decoded_texts[i],
                 len(tokens),
                 len(s.tokens),
                 s.stop_reason,
@@ -317,7 +324,7 @@ class TinkerBackend:
                     else None
                 ),
             )
-            for s in result.sequences
+            for i, s in enumerate(result.sequences)
         ]
         total_completion = sum(item.completion_tokens for item in outputs)
         cost = (len(tokens) * num_samples * self.rates["prefill"] +

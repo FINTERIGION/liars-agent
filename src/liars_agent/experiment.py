@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = ROOT / "configs/sft_qwen35_9b_lora.yaml"
 MODEL_LABELS = {"zero_shot": "Qwen3.5-9B Zero-shot", "small_classifier": "Small classifier",
                 "rule_counter": "Card counter", "lora_sft": "Qwen3.5-9B SFT", "lora_rs": "Qwen3.5-9B RS"}
-OPTIONAL_MODEL_LABELS = {"lora_rl": "Qwen3.5-9B RL"}
+OPTIONAL_MODEL_LABELS = {"lora_rl": "Qwen3.5-9B RL", "lora_rl_v2": "Qwen3.5-9B RL v2"}
 ALL_MODEL_LABELS = {**MODEL_LABELS, **OPTIONAL_MODEL_LABELS}
 DEFAULT_RL_CONFIG = {
     "loss_fn": "ppo",
@@ -37,11 +37,48 @@ DEFAULT_RL_CONFIG = {
     "top_p": 0.9,
     "win_weight": 0.70,
     "round_survival_weight": 0.30,
+    "gamma": 1.0,
+    "challenge_hit_bonus": 0.0,
+    "caught_bluff_penalty": 0.0,
     "fallback_penalty": -1.0,
     "clip_advantage": 3.0,
     "belief_aux_batch_size": 8,
     "belief_aux_weight": 0.25,
+    "on_policy_belief_ratio": 0.0,
     "posterior_opponent_prob": 0.25,
+    "switcher_opponent_prob": 0.0,
+    "self_play_opponent_prob": 0.0,
+    "rollout_workers": 1,
+    "eval_every_steps": 0,
+    "eval_blocks": 6,
+    "eval_temperature": 0.2,
+    "checkpoint_every_steps": 10,
+}
+DEFAULT_RL_V2_CONFIG = {
+    "loss_fn": "ppo",
+    "num_steps": 80,
+    "groups_per_step": 5,
+    "group_size": 4,
+    "learning_rate": 3.0e-5,
+    "temperature": 1.0,
+    "top_p": 0.98,
+    "win_weight": 0.70,
+    "round_survival_weight": 0.30,
+    "gamma": 0.90,
+    "challenge_hit_bonus": 0.15,
+    "caught_bluff_penalty": -0.20,
+    "fallback_penalty": -1.0,
+    "clip_advantage": 3.0,
+    "belief_aux_batch_size": 8,
+    "belief_aux_weight": 0.25,
+    "on_policy_belief_ratio": 0.50,
+    "posterior_opponent_prob": 0.25,
+    "switcher_opponent_prob": 0.15,
+    "self_play_opponent_prob": 0.10,
+    "rollout_workers": 4,
+    "eval_every_steps": 10,
+    "eval_blocks": 6,
+    "eval_temperature": 0.2,
     "checkpoint_every_steps": 10,
 }
 
@@ -749,10 +786,14 @@ def train_model(config: dict, output: Path, backend, stage: str = "sft", *, max_
     )
 
 
-def train_rl(config: dict, output: Path, backend) -> dict:
+def train_rl(config: dict, output: Path, backend, *, variant: str = "rl") -> dict:
+    from liars_agent.agents.base import BaseAgent
+    from liars_agent.agents.llm_agent import LLMAgent
     from liars_agent.training.tinker_rl import run_tinker_lora_rl
+    if variant not in ("rl", "rl_v2"):
+        raise ValueError(f"Unsupported RL variant: {variant}")
     mv = config_method_version(config)
-    rl_dir = output / "models/rl"
+    rl_dir = output / f"models/{variant}"
     meta_path = rl_dir / "adapter_metadata.json"
     if meta_path.exists():
         meta = read_json(meta_path)
@@ -767,12 +808,41 @@ def train_rl(config: dict, output: Path, backend) -> dict:
     if sft_meta.get("formal_training_complete") is not True:
         raise ValueError("RL requires a completed formal SFT checkpoint.")
 
-    rl_cfg = {**DEFAULT_RL_CONFIG, **config.get("rl", {})}
+    base_defaults = DEFAULT_RL_V2_CONFIG if variant == "rl_v2" else DEFAULT_RL_CONFIG
+    rl_cfg = {**base_defaults, **config.get(variant, {})}
     training = config["training"]
     posterior_opp_prob = float(rl_cfg.get("posterior_opponent_prob", 0.25))
+    switcher_opp_prob = float(rl_cfg.get("switcher_opponent_prob", 0.0))
+    self_play_opp_prob = float(rl_cfg.get("self_play_opponent_prob", 0.0))
 
+    class _FrozenSFTActionBot(BaseAgent):
+        """Frozen SFT neural opponent using action-only sampling (no extra belief calls)."""
+
+        def __init__(self, seed: int) -> None:
+            super().__init__(name="frozen_sft_opponent", style_tag="frozen_sft")
+            self._agent = LLMAgent(
+                name="frozen_sft_opponent",
+                mode="lora_sft",
+                model_version=config["base_model"],
+                backend=backend,
+                adapter_path=sft_meta_path,
+                seed=seed,
+                temperature=float(config["sampling"].get("temperature", 0.35)),
+                top_p=float(config["sampling"].get("top_p", 0.9)),
+                max_new_tokens=int(config["sampling"]["max_new_tokens"]),
+                method_version=mv,
+            )
+
+        def select_action(self, obs):
+            return self._agent.sample_candidates(obs, num_samples=1, include_belief=False)[0]
+
+    eval_opp_sampler = None
     if mv == "adaptive_v4":
-        from liars_agent.training.adaptive_opponents import ParameterizedArchetypeBot, V4_TRAIN_ARCHETYPES
+        from liars_agent.training.adaptive_opponents import (
+            MidGameSwitcherBot,
+            ParameterizedArchetypeBot,
+            V4_TRAIN_ARCHETYPES,
+        )
         from liars_agent.training.adaptive_teacher import CalibratedPosteriorBelief, PosteriorAdaptiveBot
         post_path = output / "models/v4_calibrated_posterior.json"
         cal_belief_fn = CalibratedPosteriorBelief.load(post_path).predict if post_path.exists() else None
@@ -781,11 +851,34 @@ def train_rl(config: dict, output: Path, backend) -> dict:
             rng = random.Random(group_seed)
             makers = []
             for _ in range(3):
-                if posterior_opp_prob > 0 and rng.random() < posterior_opp_prob:
+                u = rng.random()
+                if posterior_opp_prob > 0 and u < posterior_opp_prob:
                     makers.append(lambda s, bfn=cal_belief_fn: PosteriorAdaptiveBot(seed=s, belief_fn=bfn))
+                elif switcher_opp_prob > 0 and u < posterior_opp_prob + switcher_opp_prob:
+                    early_spec, late_spec = rng.sample(V4_TRAIN_ARCHETYPES, 2)
+                    sw_round = rng.choice((3, 4, 5))
+                    makers.append(
+                        lambda s, e=early_spec, l=late_spec, r=sw_round: MidGameSwitcherBot(
+                            e, l, switch_round=r, seed=s
+                        )
+                    )
+                elif self_play_opp_prob > 0 and u < posterior_opp_prob + switcher_opp_prob + self_play_opp_prob:
+                    makers.append(lambda s: _FrozenSFTActionBot(seed=s))
                 else:
                     spec = rng.choice(V4_TRAIN_ARCHETYPES)
                     makers.append(lambda s, sp=spec: ParameterizedArchetypeBot(sp, seed=s))
+            return makers
+
+        def eval_opp_sampler(block_seed: int):
+            """Fixed train-side held-out validation mix (strictly zero unseen test archetypes)."""
+            rng = random.Random(block_seed)
+            early_spec, late_spec, third_spec = rng.sample(V4_TRAIN_ARCHETYPES, 3)
+            makers = [
+                lambda s, bfn=cal_belief_fn: PosteriorAdaptiveBot(seed=s, belief_fn=bfn),
+                lambda s, e=early_spec, l=late_spec: MidGameSwitcherBot(e, l, switch_round=4, seed=s),
+                lambda s, sp=third_spec: ParameterizedArchetypeBot(sp, seed=s),
+            ]
+            rng.shuffle(makers)
             return makers
     else:
         factories = opponent_factories(config)
@@ -818,13 +911,23 @@ def train_rl(config: dict, output: Path, backend) -> dict:
         max_seq_length=int(training["max_seq_length"]),
         win_weight=float(rl_cfg["win_weight"]),
         round_survival_weight=float(rl_cfg["round_survival_weight"]),
+        gamma=float(rl_cfg["gamma"]),
+        challenge_hit_bonus=float(rl_cfg["challenge_hit_bonus"]),
+        caught_bluff_penalty=float(rl_cfg["caught_bluff_penalty"]),
         fallback_penalty=float(rl_cfg["fallback_penalty"]),
         clip_advantage=float(rl_cfg["clip_advantage"]),
         belief_aux_batch_size=int(rl_cfg["belief_aux_batch_size"]),
         belief_aux_weight=float(rl_cfg["belief_aux_weight"]),
+        on_policy_belief_ratio=float(rl_cfg["on_policy_belief_ratio"]),
+        rollout_workers=int(rl_cfg["rollout_workers"]),
+        eval_every_steps=int(rl_cfg["eval_every_steps"]),
+        eval_blocks=int(rl_cfg["eval_blocks"]),
+        eval_temperature=float(rl_cfg["eval_temperature"]),
+        eval_opponent_sampler=eval_opp_sampler,
         checkpoint_every_steps=int(rl_cfg["checkpoint_every_steps"]),
         seed=int(rl_cfg.get("seed", config["seed"])),
         method_version=mv,
+        stage_name=variant,
         budget_path=ROOT / "outputs/budget_usage.jsonl",
         budget_limit_usd=float(config["budget_limit_usd"]),
         backend=backend,
@@ -834,7 +937,7 @@ def train_rl(config: dict, output: Path, backend) -> dict:
 def llm_factory(config: dict, output: Path, backend, key: str):
     from liars_agent.agents.llm_agent import LLMAgent
     mv = config_method_version(config)
-    subdir_map = {"lora_sft": "sft", "lora_rs": "rs", "lora_rl": "rl"}
+    subdir_map = {"lora_sft": "sft", "lora_rs": "rs", "lora_rl": "rl", "lora_rl_v2": "rl_v2"}
     adapter = None if key == "zero_shot" else output / f"models/{subdir_map[key]}/adapter_metadata.json"
     sampling = config["sampling"]
     mode = "lora_rs_improved" if key == "lora_rs" else key
@@ -1105,7 +1208,7 @@ def evaluate_frozen_beliefs(config, output, backend, model_keys):
             write_json(path, stored)
             predictions[key], results[pool][key] = records, metrics
         results[pool]["paired"] = {}
-        for a, b in (("lora_sft", "zero_shot"), ("lora_rs", "lora_sft"), ("lora_rl", "lora_sft"), ("lora_rl", "zero_shot"), ("small_classifier", "rule_counter")):
+        for a, b in (("lora_sft", "zero_shot"), ("lora_rs", "lora_sft"), ("lora_rl", "lora_sft"), ("lora_rl", "zero_shot"), ("lora_rl_v2", "lora_sft"), ("lora_rl_v2", "lora_rl"), ("lora_rl_v2", "zero_shot"), ("small_classifier", "rule_counter")):
             if a in predictions and b in predictions:
                 results[pool]["paired"][f"{a}_vs_{b}"] = compute_paired_probability_metrics(predictions[a], predictions[b],
                     config["evaluation"]["bootstrap_samples"], config["seed"])
@@ -1177,7 +1280,7 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
                 factory = llm_factory(config, output, backend, key)
                 metadata = {"backend": "tinker", "base_model": config["base_model"]}
                 if key != "zero_shot":
-                    subdir_map = {"lora_sft": "sft", "lora_rs": "rs", "lora_rl": "rl"}
+                    subdir_map = {"lora_sft": "sft", "lora_rs": "rs", "lora_rl": "rl", "lora_rl_v2": "rl_v2"}
                     metadata.update(read_json(output / f"models/{subdir_map[key]}/adapter_metadata.json"))
             result = run_duplicate_evaluation(factory, opponent_factories(config, pool),
                 num_blocks=config["evaluation"]["num_blocks"], base_seed=config["seed"] + (1000 if pool == "seen" else 5000),
@@ -1197,7 +1300,7 @@ def evaluate(config: dict, output: Path, backend, model_keys: list[str]) -> dict
             print(f"Evaluation {pool}/{key}: {result.overall_win_rate:.2%}", flush=True)
     paired = {}
     for pool in ("seen", "unseen"):
-        for a, b in (("lora_sft", "zero_shot"), ("lora_rs", "lora_sft"), ("lora_rl", "lora_sft"), ("lora_rl", "zero_shot"), ("small_classifier", "rule_counter")):
+        for a, b in (("lora_sft", "zero_shot"), ("lora_rs", "lora_sft"), ("lora_rl", "lora_sft"), ("lora_rl", "zero_shot"), ("lora_rl_v2", "lora_sft"), ("lora_rl_v2", "lora_rl"), ("lora_rl_v2", "zero_shot"), ("small_classifier", "rule_counter")):
             if a in results[pool] and b in results[pool]:
                 paired[f"{pool}_{a}_vs_{b}"] = compute_paired_bootstrap_ci(results[pool][a]["block_records"],
                     results[pool][b]["block_records"], config["evaluation"]["bootstrap_samples"], config["seed"])
@@ -1361,7 +1464,7 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
         status["stages"][current] = "running"
         write_json(status_path, status)
         try:
-            needs_api = current in ("sft", "sft_trial", "rs", "rl", "preflight") or (current in ("evaluate", "endgame_evaluate") and any(k.startswith("lora") or k == "zero_shot" for k in model_keys))
+            needs_api = current in ("sft", "sft_trial", "rs", "rl", "rl_v2", "preflight") or (current in ("evaluate", "endgame_evaluate") and any(k.startswith("lora") or k == "zero_shot" for k in model_keys))
             validate_run_artifacts(output, action_supervision_policy=policy, method_version=mv)
             if needs_api and backend is None:
                 backend = make_backend(config, output)
@@ -1385,7 +1488,9 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
                     generate_rs_data(config, output, backend)
                 train_model(config, output, backend, "rs")
             elif current == "rl":
-                train_rl(config, output, backend)
+                train_rl(config, output, backend, variant="rl")
+            elif current == "rl_v2":
+                train_rl(config, output, backend, variant="rl_v2")
             elif current == "evaluate":
                 evaluate(config, output, backend, model_keys)
             elif current == "endgame_evaluate":
@@ -1405,6 +1510,7 @@ def run_pipeline(config: dict, output: Path, stage: str = "all", model_keys: lis
                  "budget_limit_usd": config["budget_limit_usd"], "sampling": config["sampling"]}
     for key, relative in (("sft_adapter", "models/sft/adapter_metadata.json"), ("rs_adapter", "models/rs/adapter_metadata.json"),
                           ("rl_adapter", "models/rl/adapter_metadata.json"),
+                          ("rl_v2_adapter", "models/rl_v2/adapter_metadata.json"),
                           ("classifier_weights", "models/small_classifier_weights.json")):
         if (output / relative).exists():
             ui_config[key] = str(output / relative)
@@ -1422,7 +1528,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output-dir", type=Path, default=None)
-    parser.add_argument("--stage", choices=("all", "local", "data", "estimate", "estimate_trial", "sft", "sft_trial", "rs", "rl", "evaluate", "endgame_evaluate", "figures", "preflight"), default="all")
+    parser.add_argument("--stage", choices=("all", "local", "data", "estimate", "estimate_trial", "sft", "sft_trial", "rs", "rl", "rl_v2", "evaluate", "endgame_evaluate", "figures", "preflight"), default="all")
     parser.add_argument("--max-train-steps", type=int, help="Bounded trial only; default 5 steps for sft_trial/estimate_trial")
     parser.add_argument("--models", help="Comma-separated model keys for evaluation")
     parser.add_argument("--smoke", action="store_true", help="Small local data/check sizes; never changes model identities")
