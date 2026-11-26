@@ -2,7 +2,9 @@
 
 四人卡牌博弈研究平台：确定性规则引擎、五类策略对手、观测条件续玩数据、分类器基线、Qwen3.5-9B 的 Tinker LoRA-SFT / RS 训练、座位轮换配对评测和 Gradio 人机对局。
 
-当前已实现真实模型调用路径，并完成本地功能验证。**真实 SFT/RS 训练和 Qwen 对局实验尚未运行**；本地验证输出是规则策略与小型分类器的结果。原仓库的模拟模型输出保存在 [历史示例](examples/README.md)，不作为实验结论。
+已完成 `Qwen/Qwen3.5-9B` 在 Tinker 平台上的真实全流程实验并归档结果：
+- **v3 正式实验（LoRA-SFT / RS）**：`seen 75.56% / 73.33%`、`unseen 66.11% / 67.78%`，详见 [v3 实验报告](docs/formal_experiment_results.md) 与 [v3 归档产物](results/selfplay_v2_20261113_01_quality_supervision_v3_endgame/)；
+- **v4 正式实验（`adaptive_v4` 后验教师 LoRA-SFT + 在线 Paired GRPO/PPO RL）**：`lora_sft` 达 `seen 87.22%` / `unseen 74.44%`，**`lora_rl` 进一步提升至 `seen 92.22%`（+5.00% 显著） / `unseen 76.67%`** 且信念校准零退化（`seen ECE = 0.0242`），详见 [v4 实验报告](docs/formal_experiment_results_v4.md) 与 [v4 归档产物](results/adaptive_v4_20261124/)。原仓库的模拟模型输出保留在 [历史示例](examples/README.md)，不作为实验结论。
 
 完整准备好的数据已作为本仓库的 [selfplay-v3-20261114 Release](https://github.com/FINTERIGION/liars-agent/releases/tag/selfplay-v3-20261114) 附件提供：训练／验证／测试共 20,000 条，另有 148 条独立残局检查观测及真值、回放。压缩包约 50.5 MB；[下载、SHA-256 校验和使用说明](datasets/selfplay-v3-20261114/README.md)。Git clone 获取代码和校验清单，数据包需单独下载。
 

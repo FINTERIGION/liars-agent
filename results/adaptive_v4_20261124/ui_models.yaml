@@ -1,0 +1,18 @@
+base_model: Qwen/Qwen3.5-9B
+budget_limit_usd: 5000
+budget_path: outputs/budget_usage.jsonl
+classifier_weights: results/adaptive_v4_20261124/models/small_classifier_weights.json
+sft_adapter: results/adaptive_v4_20261124/models/sft/adapter_metadata.json
+rl_adapter: results/adaptive_v4_20261124/models/rl/adapter_metadata.json
+method_version: adaptive_v4
+contract:
+  decision_schema_version: action_and_binary_belief_v2
+  observation_version: public_history_count_profile_v4
+  prompt_sha256: d6e6ce1b6a59ace9aae80fe29ec2e34a41a3d67bc8798b0b66c192e977ebcac9
+  rules_version: liars_bar_research_v2
+  teacher_version: calibrated_posterior_continuation_v4
+sampling:
+  fallback_strategy: card_counter_safe
+  max_new_tokens: 256
+  temperature: 0.2
+  top_p: 0.9

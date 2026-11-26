@@ -1,0 +1,25 @@
+{
+  "contract": {
+    "rules_version": "liars_bar_research_v2",
+    "observation_version": "public_history_count_profile_v4",
+    "teacher_version": "calibrated_posterior_continuation_v4",
+    "decision_schema_version": "action_and_binary_belief_v2",
+    "prompt_sha256": "d6e6ce1b6a59ace9aae80fe29ec2e34a41a3d67bc8798b0b66c192e977ebcac9"
+  },
+  "name": "small_classifier",
+  "bluff_weights": [
+    -0.57019,
+    -0.69997,
+    0.05206,
+    -0.31456,
+    -0.56634,
+    0.18672,
+    2.0079,
+    -0.12258,
+    1.59366,
+    0.41263,
+    -0.08596,
+    0.72105
+  ],
+  "challenge_prob_cutoff": 0.57
+}

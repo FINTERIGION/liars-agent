@@ -1,0 +1,14 @@
+{
+  "stages": {
+    "data": "complete",
+    "estimate": "complete",
+    "estimate_trial": "complete",
+    "preflight": "complete",
+    "sft_trial": "trial_complete",
+    "sft": "complete",
+    "rl": "complete",
+    "evaluate": "complete",
+    "figures": "complete"
+  },
+  "real_experiments": "pending"
+}

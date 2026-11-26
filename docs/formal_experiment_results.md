@@ -1,4 +1,6 @@
-# 正式实验结果汇总（Qwen3.5-9B LoRA-SFT / RS）
+# 正式实验结果汇总（v3：Qwen3.5-9B LoRA-SFT / RS）
+
+> **最新实验更新**：基于 `adaptive_v4` 后验教师与 Tinker 在线 Paired GRPO/PPO RL 的 v4 正式实验（`seen 92.22%` / `unseen 76.67%`）已归档至 [`docs/formal_experiment_results_v4.md`](formal_experiment_results_v4.md)。
 
 - **运行目录**：`selfplay_v2_20261113_01_quality_supervision_v3_endgame`
 - **归档产物**：[`results/selfplay_v2_20261113_01_quality_supervision_v3_endgame/`](../results/selfplay_v2_20261113_01_quality_supervision_v3_endgame/)

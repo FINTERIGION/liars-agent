@@ -1,0 +1,240 @@
+{
+  "experiment_name": "qwen35_9b_liars_bar_adaptive_v4",
+  "method_version": "adaptive_v4",
+  "base_model": "Qwen/Qwen3.5-9B",
+  "platform": "tinker",
+  "seed": 42,
+  "budget_limit_usd": 5000,
+  "dataset": {
+    "total_target_samples": 10000,
+    "belief_target_samples": 10000,
+    "num_games": 1000,
+    "max_games": 2000,
+    "workers": 1,
+    "batch_games": 20,
+    "rollout_trajectories_per_state": 16,
+    "min_advantage_margin": 0.05,
+    "history_critical_ratio": 0.5,
+    "counterfactual_train_pairs": 200,
+    "split_by": "game_id",
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "history_ablation_augmentation_ratio": 0.0
+  },
+  "lora": {
+    "r": 16,
+    "train_attn": true,
+    "train_mlp": true,
+    "train_unembed": false
+  },
+  "training": {
+    "batch_size": 32,
+    "learning_rate": 0.0002,
+    "num_epochs": 3,
+    "max_seq_length": 16384,
+    "seed": 42,
+    "checkpoint_every_steps": 100,
+    "diagnostic_steps": [
+      50,
+      100
+    ],
+    "diagnostic_samples_per_task": 64,
+    "trial_verification": {
+      "version": "trial_training_sampling_closure_v2",
+      "probe_per_task": 2,
+      "logprob_atol": 0.0001,
+      "logprob_rtol": 0.0001,
+      "min_update_delta": 1e-06,
+      "jitter_multiplier": 3.0
+    },
+    "action_supervision": {
+      "version": "empirical_all_answers_weighted_actions_v3",
+      "positive_gap_weight": 0.5,
+      "tie_tolerance": 1e-12,
+      "gap_threshold": 0.05,
+      "target_selection": "all_acceptable_answers_per_state",
+      "answer_weighting": "equal_share_of_state_weight",
+      "action_ending": "first_assistant_eos_inclusive",
+      "action_weight_normalization": "train_mean",
+      "checkpoint_selection": "val_action_set_nll"
+    }
+  },
+  "sampling": {
+    "temperature": 0.2,
+    "top_p": 0.9,
+    "max_new_tokens": 256,
+    "fallback_strategy": "card_counter_safe"
+  },
+  "rs": {
+    "target_samples": 2000,
+    "belief_target_samples": 2000,
+    "num_games": 400,
+    "max_games": 2000,
+    "candidates_per_state": 4,
+    "candidate_temperature": 0.7,
+    "rollouts_per_candidate": 16,
+    "min_advantage_margin": 0.05,
+    "learning_rate": 5e-05,
+    "num_epochs": 1
+  },
+  "evaluation": {
+    "num_blocks": 45,
+    "bootstrap_samples": 10000,
+    "unseen_belief_samples": 1000,
+    "unseen_belief_max_games": 1000,
+    "endgame_coverage_dir": "endgame_coverage"
+  },
+  "opponents": {
+    "seen_pool": {
+      "description": "用于生成 v4 对称多样化自博弈与后验教师数据的 13 类参数化策略原型",
+      "agents": [
+        {
+          "id": "single_tell_trapper",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "single_tell_trapper"
+          }
+        },
+        {
+          "id": "multi_tell_bluffer",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "multi_tell_bluffer"
+          }
+        },
+        {
+          "id": "ultra_honest_rock",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "ultra_honest_rock"
+          }
+        },
+        {
+          "id": "chaotic_maniac",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "chaotic_maniac"
+          }
+        },
+        {
+          "id": "paranoid_sheriff",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "paranoid_sheriff"
+          }
+        },
+        {
+          "id": "single_hunter",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "single_hunter"
+          }
+        },
+        {
+          "id": "balanced_mixed",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "balanced_mixed"
+          }
+        },
+        {
+          "id": "cautious_single_truth",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "cautious_single_truth"
+          }
+        },
+        {
+          "id": "pressure_dumper",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "pressure_dumper"
+          }
+        },
+        {
+          "id": "coward_under_fire",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "coward_under_fire"
+          }
+        },
+        {
+          "id": "desperate_gambler",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "desperate_gambler"
+          }
+        },
+        {
+          "id": "mixed_card_trapper",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "mixed_card_trapper"
+          }
+        },
+        {
+          "id": "card_counter_classic",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "card_counter_classic"
+          }
+        }
+      ]
+    },
+    "unseen_pool": {
+      "description": "未见跨局适应测试池：极端镜像单张诈唬者、极端镜像多张诈唬者、局中变脸探针与经典记牌",
+      "agents": [
+        {
+          "id": "unseen_mirror_single_bluffer",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "unseen_mirror_single_bluffer"
+          }
+        },
+        {
+          "id": "unseen_mirror_multi_bluffer",
+          "class": "ParameterizedArchetypeBot",
+          "params": {
+            "archetype_id": "unseen_mirror_multi_bluffer"
+          }
+        },
+        {
+          "id": "unseen_midgame_switcher",
+          "class": "MidGameSwitcherBot",
+          "params": {
+            "early_archetype_id": "unseen_mirror_multi_bluffer",
+            "late_archetype_id": "unseen_mirror_single_bluffer",
+            "switch_round": 4
+          }
+        },
+        {
+          "id": "card_counter",
+          "class": "CardCounterBot",
+          "params": {
+            "risk_aversion": 1.0,
+            "posterior_challenge_cutoff": 0.64
+          }
+        }
+      ]
+    },
+    "default_matchups": {
+      "seen_lineup": [
+        "single_tell_trapper",
+        "multi_tell_bluffer",
+        "paranoid_sheriff"
+      ],
+      "unseen_lineup": [
+        "unseen_mirror_single_bluffer",
+        "unseen_mirror_multi_bluffer",
+        "card_counter"
+      ]
+    }
+  },
+  "contract": {
+    "rules_version": "liars_bar_research_v2",
+    "observation_version": "public_history_count_profile_v4",
+    "teacher_version": "calibrated_posterior_continuation_v4",
+    "decision_schema_version": "action_and_binary_belief_v2",
+    "prompt_sha256": "d6e6ce1b6a59ace9aae80fe29ec2e34a41a3d67bc8798b0b66c192e977ebcac9"
+  }
+}

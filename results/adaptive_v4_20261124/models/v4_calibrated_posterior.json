@@ -1,0 +1,47 @@
+{
+  "contract": {
+    "rules_version": "liars_bar_research_v2",
+    "observation_version": "public_history_count_profile_v4",
+    "teacher_version": "calibrated_posterior_continuation_v4",
+    "decision_schema_version": "action_and_binary_belief_v2",
+    "prompt_sha256": "d6e6ce1b6a59ace9aae80fe29ec2e34a41a3d67bc8798b0b66c192e977ebcac9"
+  },
+  "recency_decay": 0.9,
+  "archetype_ids": [
+    "single_tell_trapper",
+    "multi_tell_bluffer",
+    "ultra_honest_rock",
+    "chaotic_maniac",
+    "paranoid_sheriff",
+    "single_hunter",
+    "balanced_mixed",
+    "cautious_single_truth",
+    "pressure_dumper",
+    "coward_under_fire",
+    "desperate_gambler",
+    "mixed_card_trapper",
+    "card_counter_classic"
+  ],
+  "weights": [
+    -0.026504,
+    -0.381948,
+    -0.212206,
+    -0.044322,
+    0.395675,
+    0.18737,
+    -0.213874,
+    0.654552,
+    -0.027538,
+    -0.433166,
+    0.006272,
+    0.25007,
+    0.031003,
+    -0.072002,
+    0.003732,
+    0.167965,
+    -0.25143,
+    0.064101,
+    0.75,
+    -0.159154
+  ]
+}

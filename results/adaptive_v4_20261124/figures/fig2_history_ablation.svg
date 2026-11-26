@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 440" width="820" height="440" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #ffffff;">
+  <title>图2：历史信息消融对照（整局胜率与质疑命中率）</title>
+  <rect width="820" height="440" fill="#ffffff" rx="8"/>
+  <text x="410" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1e293b">图2：历史信息消融对照（整局胜率与质疑命中率）</text>
+  <line x1="90" y1="360" x2="770" y2="360" stroke="#334155" stroke-width="1.5"/>
+  <line x1="90" y1="75" x2="90" y2="360" stroke="#334155" stroke-width="1.5"/>
+  <line x1="90" y1="360" x2="770" y2="360" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="364" text-anchor="end" font-size="12" fill="#475569">0%</text>
+  <line x1="90" y1="303" x2="770" y2="303" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="307" text-anchor="end" font-size="12" fill="#475569">20%</text>
+  <line x1="90" y1="246" x2="770" y2="246" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="250" text-anchor="end" font-size="12" fill="#475569">40%</text>
+  <line x1="90" y1="189" x2="770" y2="189" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="193" text-anchor="end" font-size="12" fill="#475569">60%</text>
+  <line x1="90" y1="132" x2="770" y2="132" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="136" text-anchor="end" font-size="12" fill="#475569">80%</text>
+  <line x1="90" y1="75" x2="770" y2="75" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="80" y="79" text-anchor="end" font-size="12" fill="#475569">100%</text>
+  <rect x="520" y="52" width="14" height="14" fill="#4f46e5" rx="2"/>
+  <text x="540" y="64" font-size="13" fill="#1e293b">整局胜率与 95% CI</text>
+  <rect x="520" y="74" width="14" height="14" fill="#f59e0b" rx="2"/>
+  <text x="540" y="86" font-size="13" fill="#1e293b">质疑命中率 (Challenge Precision)</text>
+  <rect x="153" y="112" width="46" height="248" fill="#4f46e5" rx="4"/>
+  <line x1="176" y1="99" x2="176" y2="125" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="170" y1="99" x2="182" y2="99" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="170" y1="125" x2="182" y2="125" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="176" y="91" text-anchor="middle" font-size="10" font-weight="600" fill="#1e293b">87.2%</text>
+  <text x="176" y="76" text-anchor="middle" font-size="10" fill="#475569">n=180</text>
+  <rect x="207" y="303" width="46" height="57" fill="#f59e0b" rx="4"/>
+  <text x="230" y="295" text-anchor="middle" font-size="10" font-weight="600" fill="#1e293b">20.0%</text>
+  <text x="230" y="280" text-anchor="middle" font-size="10" fill="#475569">n=30</text>
+  <text x="203" y="388" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">full</text>
+  <rect x="380" y="102" width="46" height="258" fill="#4f46e5" rx="4"/>
+  <line x1="403" y1="91" x2="403" y2="115" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="397" y1="91" x2="409" y2="91" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="397" y1="115" x2="409" y2="115" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="403" y="83" text-anchor="middle" font-size="10" font-weight="600" fill="#1e293b">90.6%</text>
+  <text x="403" y="68" text-anchor="middle" font-size="10" fill="#475569">n=180</text>
+  <rect x="434" y="307" width="46" height="53" fill="#f59e0b" rx="4"/>
+  <text x="457" y="299" text-anchor="middle" font-size="10" font-weight="600" fill="#1e293b">18.6%</text>
+  <text x="457" y="284" text-anchor="middle" font-size="10" fill="#475569">n=43</text>
+  <text x="430" y="388" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">current_round_only</text>
+  <rect x="606" y="102" width="46" height="258" fill="#4f46e5" rx="4"/>
+  <line x1="629" y1="91" x2="629" y2="113" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="623" y1="91" x2="635" y2="91" stroke="#0f172a" stroke-width="1.8"/>
+  <line x1="623" y1="113" x2="635" y2="113" stroke="#0f172a" stroke-width="1.8"/>
+  <text x="629" y="83" text-anchor="middle" font-size="10" font-weight="600" fill="#1e293b">90.6%</text>
+  <text x="629" y="68" text-anchor="middle" font-size="10" fill="#475569">n=180</text>
+  <rect x="660" y="289" width="46" height="71" fill="#f59e0b" rx="4"/>
+  <text x="683" y="281" text-anchor="middle" font-size="10" font-weight="600" fill="#1e293b">25.0%</text>
+  <text x="683" y="266" text-anchor="middle" font-size="10" fill="#475569">n=40</text>
+  <text x="656" y="388" text-anchor="middle" font-size="13" font-weight="600" fill="#1e293b">last_action_only</text>
+</svg>

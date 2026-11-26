@@ -1,0 +1,1451 @@
+{
+  "contract": {
+    "rules_version": "liars_bar_research_v2",
+    "observation_version": "public_history_count_profile_v4",
+    "teacher_version": "calibrated_posterior_continuation_v4",
+    "decision_schema_version": "action_and_binary_belief_v2",
+    "prompt_sha256": "d6e6ce1b6a59ace9aae80fe29ec2e34a41a3d67bc8798b0b66c192e977ebcac9"
+  },
+  "version": "trial_training_sampling_closure_v2",
+  "attempt_id": "647b34e3b33646049609e6480f25b17f",
+  "status": "passed",
+  "config": {
+    "version": "trial_training_sampling_closure_v2",
+    "probe_per_task": 2,
+    "logprob_atol": 0.0001,
+    "logprob_rtol": 0.0001,
+    "min_update_delta": 1e-06,
+    "jitter_multiplier": 3.0
+  },
+  "sampling_config": {
+    "temperature": 0.2,
+    "top_p": 0.9,
+    "max_new_tokens": 256
+  },
+  "dataset_sha256": "e08248d283beef7feb421b4e7f2dc38a8a7d474018d597f75a911a8cc4d0bb14",
+  "base_model": "Qwen/Qwen3.5-9B",
+  "lora_config": {
+    "r": 16,
+    "train_mlp": true,
+    "train_attn": true,
+    "train_unembed": false
+  },
+  "source_split": "val",
+  "model_api_calls_are_real_when_executed": true,
+  "probe_ids": {
+    "action": [
+      "train_v4_14859807547600205990_game_00005_r15_s0_action",
+      "train_v4_9928000258758049445_game_00018_r6_s0_action"
+    ],
+    "belief": [
+      "train_v4_2633589271318024079_game_00010_r5_s3_belief",
+      "train_v4_3782854923426571536_game_00010_r9_s4_belief"
+    ]
+  },
+  "before_update": {
+    "probe_sha256": "0c27dceddc7db65acf519ee8d8a09bf6fc3de5e3b8cbd01573a2636e8940149f",
+    "num_sequences": 4,
+    "input_tokens": 10103,
+    "num_supervised_tokens": 23,
+    "sequences": [
+      {
+        "task": "action",
+        "input_tokens": 3499,
+        "positions": [
+          3488,
+          3489,
+          3490,
+          3491,
+          3492,
+          3493,
+          3494,
+          3495,
+          3496,
+          3497,
+          3498
+        ],
+        "target_tokens": [
+          4754,
+          60947,
+          7681,
+          816,
+          763,
+          328,
+          32,
+          16,
+          15,
+          8934,
+          248046
+        ],
+        "logprobs": [
+          -0.0003387246106285602,
+          -4.77609210065566e-05,
+          -5.0329285841144156e-06,
+          -1.0679281103875837e-06,
+          -6.501509666442871,
+          -0.00041634609806351364,
+          -3.421367728151381e-05,
+          -0.9528225064277649,
+          -1.771820306777954,
+          -1.635916851228103e-05,
+          -0.00012408469046931714
+        ]
+      },
+      {
+        "task": "action",
+        "input_tokens": 2366,
+        "positions": [
+          2356,
+          2357,
+          2358,
+          2359,
+          2360,
+          2361,
+          2362,
+          2363,
+          2364,
+          2365
+        ],
+        "target_tokens": [
+          4754,
+          60947,
+          7681,
+          816,
+          763,
+          328,
+          32,
+          22,
+          8934,
+          248046
+        ],
+        "logprobs": [
+          -0.0003958566812798381,
+          -5.1406779675744474e-05,
+          -8.027107469388284e-06,
+          -2.7693370157066965e-06,
+          -6.127196788787842,
+          -0.00023284688359126449,
+          -1.1588297638809308e-05,
+          -1.0318095684051514,
+          -1.0156461939914152e-05,
+          -0.0002046796289505437
+        ]
+      },
+      {
+        "task": "belief",
+        "input_tokens": 1875,
+        "positions": [
+          1874
+        ],
+        "target_tokens": [
+          16
+        ],
+        "logprobs": [
+          -0.38744425773620605
+        ]
+      },
+      {
+        "task": "belief",
+        "input_tokens": 2363,
+        "positions": [
+          2362
+        ],
+        "target_tokens": [
+          16
+        ],
+        "logprobs": [
+          -0.1006460040807724
+        ]
+      }
+    ]
+  },
+  "baseline_control": {
+    "probe_sha256": "0c27dceddc7db65acf519ee8d8a09bf6fc3de5e3b8cbd01573a2636e8940149f",
+    "num_sequences": 4,
+    "input_tokens": 10103,
+    "num_supervised_tokens": 23,
+    "sequences": [
+      {
+        "task": "action",
+        "input_tokens": 3499,
+        "positions": [
+          3488,
+          3489,
+          3490,
+          3491,
+          3492,
+          3493,
+          3494,
+          3495,
+          3496,
+          3497,
+          3498
+        ],
+        "target_tokens": [
+          4754,
+          60947,
+          7681,
+          816,
+          763,
+          328,
+          32,
+          16,
+          15,
+          8934,
+          248046
+        ],
+        "logprobs": [
+          -0.0003387246106285602,
+          -4.77609210065566e-05,
+          -5.0329285841144156e-06,
+          -1.0679281103875837e-06,
+          -6.501509666442871,
+          -0.00041634609806351364,
+          -3.421367728151381e-05,
+          -0.9528225064277649,
+          -1.771820306777954,
+          -1.635916851228103e-05,
+          -0.00012408469046931714
+        ]
+      },
+      {
+        "task": "action",
+        "input_tokens": 2366,
+        "positions": [
+          2356,
+          2357,
+          2358,
+          2359,
+          2360,
+          2361,
+          2362,
+          2363,
+          2364,
+          2365
+        ],
+        "target_tokens": [
+          4754,
+          60947,
+          7681,
+          816,
+          763,
+          328,
+          32,
+          22,
+          8934,
+          248046
+        ],
+        "logprobs": [
+          -0.0003958566812798381,
+          -5.1406779675744474e-05,
+          -8.027107469388284e-06,
+          -2.7693370157066965e-06,
+          -6.127196788787842,
+          -0.00023284688359126449,
+          -1.1588297638809308e-05,
+          -1.0318095684051514,
+          -1.0156461939914152e-05,
+          -0.0002046796289505437
+        ]
+      },
+      {
+        "task": "belief",
+        "input_tokens": 1875,
+        "positions": [
+          1874
+        ],
+        "target_tokens": [
+          16
+        ],
+        "logprobs": [
+          -0.38744425773620605
+        ]
+      },
+      {
+        "task": "belief",
+        "input_tokens": 2363,
+        "positions": [
+          2362
+        ],
+        "target_tokens": [
+          16
+        ],
+        "logprobs": [
+          -0.1006460040807724
+        ]
+      }
+    ]
+  },
+  "phase": "complete",
+  "completed_training_steps": 5,
+  "checkpoints": {
+    "state_path": "tinker://91ca8ddf-b87c-53d0-8396-b492d9832312:train:0/weights/sft_trial-trial-step-5",
+    "sampler_path": "tinker://91ca8ddf-b87c-53d0-8396-b492d9832312:train:0/sampler_weights/sft_trial-trial-step-5"
+  },
+  "saved_snapshot": {
+    "probe_sha256": "0c27dceddc7db65acf519ee8d8a09bf6fc3de5e3b8cbd01573a2636e8940149f",
+    "num_sequences": 4,
+    "input_tokens": 10103,
+    "num_supervised_tokens": 23,
+    "sequences": [
+      {
+        "task": "action",
+        "input_tokens": 3499,
+        "positions": [
+          3488,
+          3489,
+          3490,
+          3491,
+          3492,
+          3493,
+          3494,
+          3495,
+          3496,
+          3497,
+          3498
+        ],
+        "target_tokens": [
+          4754,
+          60947,
+          7681,
+          816,
+          763,
+          328,
+          32,
+          16,
+          15,
+          8934,
+          248046
+        ],
+        "logprobs": [
+          -0.0004225101147312671,
+          -5.08785669808276e-05,
+          -5.862697889824631e-06,
+          -1.2146722383477027e-06,
+          -5.379631042480469,
+          -0.00020788430992979556,
+          -3.329402898089029e-05,
+          -0.9408837556838989,
+          -1.7144501209259033,
+          -2.0474304619710892e-05,
+          -0.00017075160576496273
+        ]
+      },
+      {
+        "task": "action",
+        "input_tokens": 2366,
+        "positions": [
+          2356,
+          2357,
+          2358,
+          2359,
+          2360,
+          2361,
+          2362,
+          2363,
+          2364,
+          2365
+        ],
+        "target_tokens": [
+          4754,
+          60947,
+          7681,
+          816,
+          763,
+          328,
+          32,
+          22,
+          8934,
+          248046
+        ],
+        "logprobs": [
+          -0.0004621740663424134,
+          -5.480725667439401e-05,
+          -8.428511137026362e-06,
+          -2.459515826558345e-06,
+          -4.634773254394531,
+          -0.00011964224540861323,
+          -1.0397016012575477e-05,
+          -1.0324400663375854,
+          -1.2179612895124592e-05,
+          -0.00024556939024478197
+        ]
+      },
+      {
+        "task": "belief",
+        "input_tokens": 1875,
+        "positions": [
+          1874
+        ],
+        "target_tokens": [
+          16
+        ],
+        "logprobs": [
+          -0.6332664489746094
+        ]
+      },
+      {
+        "task": "belief",
+        "input_tokens": 2363,
+        "positions": [
+          2362
+        ],
+        "target_tokens": [
+          16
+        ],
+        "logprobs": [
+          -0.14318539202213287
+        ]
+      }
+    ]
+  },
+  "sampling": {
+    "status": "passed",
+    "sampler_path": "tinker://91ca8ddf-b87c-53d0-8396-b492d9832312:train:0/sampler_weights/sft_trial-trial-step-5",
+    "probe_source": "val",
+    "probe_ids": {
+      "action": [
+        "train_v4_14859807547600205990_game_00005_r15_s0_action",
+        "train_v4_9928000258758049445_game_00018_r6_s0_action"
+      ],
+      "belief": [
+        "train_v4_2633589271318024079_game_00010_r5_s3_belief",
+        "train_v4_3782854923426571536_game_00010_r9_s4_belief"
+      ]
+    },
+    "tolerances": {
+      "logprob_atol": 0.0001,
+      "logprob_rtol": 0.0001
+    },
+    "sampling": {
+      "temperature": 0.2,
+      "top_p": 0.9,
+      "max_new_tokens": 256,
+      "seed": 42
+    },
+    "fresh_sampler_created": true,
+    "action_checks": [
+      {
+        "sample_id": "train_v4_14859807547600205990_game_00005_r15_s0_action",
+        "passed": true,
+        "forced_challenge": false,
+        "belief_requested": false,
+        "raw_output": "{\"chosen_action_id\":\"A17\"}",
+        "stop_reason": "stop",
+        "chosen_action_id": "A17"
+      },
+      {
+        "sample_id": "train_v4_9928000258758049445_game_00018_r6_s0_action",
+        "passed": true,
+        "forced_challenge": false,
+        "belief_requested": false,
+        "raw_output": "{\"chosen_action_id\":\"A7\"}",
+        "stop_reason": "stop",
+        "chosen_action_id": "A7"
+      }
+    ],
+    "belief_checks": [
+      {
+        "sample_id": "train_v4_2633589271318024079_game_00010_r5_s3_belief",
+        "passed": true,
+        "training_logprobs": {
+          "0": -0.7582664489746094,
+          "1": -0.6332664489746094
+        },
+        "sampler_logprobs": {
+          "0": -0.7582664489746094,
+          "1": -0.6332664489746094
+        },
+        "sampler_probability": 0.5312093733737563,
+        "absolute_errors": {
+          "0": 0.0,
+          "1": 0.0
+        }
+      },
+      {
+        "sample_id": "train_v4_3782854923426571536_game_00010_r9_s4_belief",
+        "passed": true,
+        "training_logprobs": {
+          "0": -2.0181853771209717,
+          "1": -0.14318539202213287
+        },
+        "sampler_logprobs": {
+          "0": -2.0181853771209717,
+          "1": -0.14318539202213287
+        },
+        "sampler_probability": 0.8670357580842941,
+        "absolute_errors": {
+          "0": 0.0,
+          "1": 0.0
+        }
+      }
+    ],
+    "errors": [],
+    "interpretation": "Native JSON legality and individual 0/1 token logprob agreement only; no fallback, action-quality accuracy or test-set model selection.",
+    "usage": {
+      "estimated_cost_usd": 0.016716749000011077,
+      "reserved_unknown_usd": 0,
+      "pending_requests": 0,
+      "training_tokens": 8476,
+      "prompt_tokens": 14326,
+      "completion_tokens": 19,
+      "completion_tokens_upper_bound": 4
+    }
+  },
+  "training": {
+    "version": "trial_training_sampling_closure_v2",
+    "config": {
+      "version": "trial_training_sampling_closure_v2",
+      "probe_per_task": 2,
+      "logprob_atol": 0.0001,
+      "logprob_rtol": 0.0001,
+      "min_update_delta": 1e-06,
+      "jitter_multiplier": 3.0
+    },
+    "status": "passed",
+    "state_path": "tinker://91ca8ddf-b87c-53d0-8396-b492d9832312:train:0/weights/sft_trial-trial-step-5",
+    "next_learning_rate": 1.5189873417721521e-05,
+    "checks": {
+      "observable_update": {
+        "passed": true,
+        "baseline_jitter": {
+          "max_abs_delta": 0.0,
+          "mean_abs_delta": 0.0,
+          "matched": true
+        },
+        "update_delta": {
+          "max_abs_delta": 1.4924235343933105,
+          "mean_abs_delta": 0.12926865013626748,
+          "matched": false
+        },
+        "required_max_abs_delta_exclusive": 1e-06,
+        "exceeds_reload_tolerance": true,
+        "belief": {
+          "passed": true,
+          "baseline_jitter": {
+            "max_abs_delta": 0.0,
+            "mean_abs_delta": 0.0,
+            "matched": true
+          },
+          "update_delta": {
+            "max_abs_delta": 0.24582219123840332,
+            "mean_abs_delta": 0.1441807895898819,
+            "matched": false
+          },
+          "required_max_abs_delta_exclusive": 1e-06,
+          "exceeds_reload_tolerance": true
+        },
+        "criterion": "All probes and belief probes each exceed the noise/floor threshold and reload matching tolerance."
+      },
+      "state_reload": {
+        "passed": true,
+        "max_abs_delta": 0.0,
+        "mean_abs_delta": 0.0,
+        "matched": true
+      },
+      "optimizer_restore": {
+        "passed": true,
+        "max_abs_delta": 0.0,
+        "mean_abs_delta": 0.0,
+        "matched": true,
+        "same_next_batch": true,
+        "same_next_learning_rate": true,
+        "live_branch": "original client retained across the trial"
+      },
+      "optimizer_negative_control": {
+        "passed": true,
+        "max_abs_delta": 0.12110352516174316,
+        "mean_abs_delta": 0.01444757852977852,
+        "matched": false,
+        "required_max_abs_delta_exclusive": 1e-06,
+        "same_saved_state": true,
+        "same_next_batch": true,
+        "same_next_learning_rate": true,
+        "criterion": "Live continuation differs from weight-only restoration beyond both matching tolerance and measured baseline noise floor."
+      }
+    },
+    "snapshots": {
+      "before": {
+        "probe_sha256": "0c27dceddc7db65acf519ee8d8a09bf6fc3de5e3b8cbd01573a2636e8940149f",
+        "num_sequences": 4,
+        "input_tokens": 10103,
+        "num_supervised_tokens": 23,
+        "sequences": [
+          {
+            "task": "action",
+            "input_tokens": 3499,
+            "positions": [
+              3488,
+              3489,
+              3490,
+              3491,
+              3492,
+              3493,
+              3494,
+              3495,
+              3496,
+              3497,
+              3498
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              16,
+              15,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0003387246106285602,
+              -4.77609210065566e-05,
+              -5.0329285841144156e-06,
+              -1.0679281103875837e-06,
+              -6.501509666442871,
+              -0.00041634609806351364,
+              -3.421367728151381e-05,
+              -0.9528225064277649,
+              -1.771820306777954,
+              -1.635916851228103e-05,
+              -0.00012408469046931714
+            ]
+          },
+          {
+            "task": "action",
+            "input_tokens": 2366,
+            "positions": [
+              2356,
+              2357,
+              2358,
+              2359,
+              2360,
+              2361,
+              2362,
+              2363,
+              2364,
+              2365
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              22,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0003958566812798381,
+              -5.1406779675744474e-05,
+              -8.027107469388284e-06,
+              -2.7693370157066965e-06,
+              -6.127196788787842,
+              -0.00023284688359126449,
+              -1.1588297638809308e-05,
+              -1.0318095684051514,
+              -1.0156461939914152e-05,
+              -0.0002046796289505437
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 1875,
+            "positions": [
+              1874
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.38744425773620605
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 2363,
+            "positions": [
+              2362
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.1006460040807724
+            ]
+          }
+        ]
+      },
+      "baseline_control": {
+        "probe_sha256": "0c27dceddc7db65acf519ee8d8a09bf6fc3de5e3b8cbd01573a2636e8940149f",
+        "num_sequences": 4,
+        "input_tokens": 10103,
+        "num_supervised_tokens": 23,
+        "sequences": [
+          {
+            "task": "action",
+            "input_tokens": 3499,
+            "positions": [
+              3488,
+              3489,
+              3490,
+              3491,
+              3492,
+              3493,
+              3494,
+              3495,
+              3496,
+              3497,
+              3498
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              16,
+              15,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0003387246106285602,
+              -4.77609210065566e-05,
+              -5.0329285841144156e-06,
+              -1.0679281103875837e-06,
+              -6.501509666442871,
+              -0.00041634609806351364,
+              -3.421367728151381e-05,
+              -0.9528225064277649,
+              -1.771820306777954,
+              -1.635916851228103e-05,
+              -0.00012408469046931714
+            ]
+          },
+          {
+            "task": "action",
+            "input_tokens": 2366,
+            "positions": [
+              2356,
+              2357,
+              2358,
+              2359,
+              2360,
+              2361,
+              2362,
+              2363,
+              2364,
+              2365
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              22,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0003958566812798381,
+              -5.1406779675744474e-05,
+              -8.027107469388284e-06,
+              -2.7693370157066965e-06,
+              -6.127196788787842,
+              -0.00023284688359126449,
+              -1.1588297638809308e-05,
+              -1.0318095684051514,
+              -1.0156461939914152e-05,
+              -0.0002046796289505437
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 1875,
+            "positions": [
+              1874
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.38744425773620605
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 2363,
+            "positions": [
+              2362
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.1006460040807724
+            ]
+          }
+        ]
+      },
+      "saved": {
+        "probe_sha256": "0c27dceddc7db65acf519ee8d8a09bf6fc3de5e3b8cbd01573a2636e8940149f",
+        "num_sequences": 4,
+        "input_tokens": 10103,
+        "num_supervised_tokens": 23,
+        "sequences": [
+          {
+            "task": "action",
+            "input_tokens": 3499,
+            "positions": [
+              3488,
+              3489,
+              3490,
+              3491,
+              3492,
+              3493,
+              3494,
+              3495,
+              3496,
+              3497,
+              3498
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              16,
+              15,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0004225101147312671,
+              -5.08785669808276e-05,
+              -5.862697889824631e-06,
+              -1.2146722383477027e-06,
+              -5.379631042480469,
+              -0.00020788430992979556,
+              -3.329402898089029e-05,
+              -0.9408837556838989,
+              -1.7144501209259033,
+              -2.0474304619710892e-05,
+              -0.00017075160576496273
+            ]
+          },
+          {
+            "task": "action",
+            "input_tokens": 2366,
+            "positions": [
+              2356,
+              2357,
+              2358,
+              2359,
+              2360,
+              2361,
+              2362,
+              2363,
+              2364,
+              2365
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              22,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0004621740663424134,
+              -5.480725667439401e-05,
+              -8.428511137026362e-06,
+              -2.459515826558345e-06,
+              -4.634773254394531,
+              -0.00011964224540861323,
+              -1.0397016012575477e-05,
+              -1.0324400663375854,
+              -1.2179612895124592e-05,
+              -0.00024556939024478197
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 1875,
+            "positions": [
+              1874
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.6332664489746094
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 2363,
+            "positions": [
+              2362
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.14318539202213287
+            ]
+          }
+        ]
+      },
+      "reloaded": {
+        "probe_sha256": "0c27dceddc7db65acf519ee8d8a09bf6fc3de5e3b8cbd01573a2636e8940149f",
+        "num_sequences": 4,
+        "input_tokens": 10103,
+        "num_supervised_tokens": 23,
+        "sequences": [
+          {
+            "task": "action",
+            "input_tokens": 3499,
+            "positions": [
+              3488,
+              3489,
+              3490,
+              3491,
+              3492,
+              3493,
+              3494,
+              3495,
+              3496,
+              3497,
+              3498
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              16,
+              15,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0004225101147312671,
+              -5.08785669808276e-05,
+              -5.862697889824631e-06,
+              -1.2146722383477027e-06,
+              -5.379631042480469,
+              -0.00020788430992979556,
+              -3.329402898089029e-05,
+              -0.9408837556838989,
+              -1.7144501209259033,
+              -2.0474304619710892e-05,
+              -0.00017075160576496273
+            ]
+          },
+          {
+            "task": "action",
+            "input_tokens": 2366,
+            "positions": [
+              2356,
+              2357,
+              2358,
+              2359,
+              2360,
+              2361,
+              2362,
+              2363,
+              2364,
+              2365
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              22,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0004621740663424134,
+              -5.480725667439401e-05,
+              -8.428511137026362e-06,
+              -2.459515826558345e-06,
+              -4.634773254394531,
+              -0.00011964224540861323,
+              -1.0397016012575477e-05,
+              -1.0324400663375854,
+              -1.2179612895124592e-05,
+              -0.00024556939024478197
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 1875,
+            "positions": [
+              1874
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.6332664489746094
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 2363,
+            "positions": [
+              2362
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.14318539202213287
+            ]
+          }
+        ]
+      },
+      "original_next": {
+        "probe_sha256": "0c27dceddc7db65acf519ee8d8a09bf6fc3de5e3b8cbd01573a2636e8940149f",
+        "num_sequences": 4,
+        "input_tokens": 10103,
+        "num_supervised_tokens": 23,
+        "sequences": [
+          {
+            "task": "action",
+            "input_tokens": 3499,
+            "positions": [
+              3488,
+              3489,
+              3490,
+              3491,
+              3492,
+              3493,
+              3494,
+              3495,
+              3496,
+              3497,
+              3498
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              16,
+              15,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.00047416778397746384,
+              -5.232405965216458e-05,
+              -5.979974048386794e-06,
+              -8.594138876105717e-07,
+              -3.895561456680298,
+              -0.00012192589201731607,
+              -3.117587766610086e-05,
+              -0.9361093044281006,
+              -1.7780301570892334,
+              -3.025652767973952e-05,
+              -0.00017062363622244447
+            ]
+          },
+          {
+            "task": "action",
+            "input_tokens": 2366,
+            "positions": [
+              2356,
+              2357,
+              2358,
+              2359,
+              2360,
+              2361,
+              2362,
+              2363,
+              2364,
+              2365
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              22,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0005444387206807733,
+              -5.628937651636079e-05,
+              -8.388546120841056e-06,
+              -2.1884823127038544e-06,
+              -3.4086742401123047,
+              -6.317430961644277e-05,
+              -9.513958502793685e-06,
+              -1.0319128036499023,
+              -1.3244972251413856e-05,
+              -0.00028020914760418236
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 1875,
+            "positions": [
+              1874
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.8266777992248535
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 2363,
+            "positions": [
+              2362
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.20196989178657532
+            ]
+          }
+        ]
+      },
+      "restored_next": {
+        "probe_sha256": "0c27dceddc7db65acf519ee8d8a09bf6fc3de5e3b8cbd01573a2636e8940149f",
+        "num_sequences": 4,
+        "input_tokens": 10103,
+        "num_supervised_tokens": 23,
+        "sequences": [
+          {
+            "task": "action",
+            "input_tokens": 3499,
+            "positions": [
+              3488,
+              3489,
+              3490,
+              3491,
+              3492,
+              3493,
+              3494,
+              3495,
+              3496,
+              3497,
+              3498
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              16,
+              15,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.00047416778397746384,
+              -5.232405965216458e-05,
+              -5.979974048386794e-06,
+              -8.594138876105717e-07,
+              -3.895561456680298,
+              -0.00012192589201731607,
+              -3.117587766610086e-05,
+              -0.9361093044281006,
+              -1.7780301570892334,
+              -3.025652767973952e-05,
+              -0.00017062363622244447
+            ]
+          },
+          {
+            "task": "action",
+            "input_tokens": 2366,
+            "positions": [
+              2356,
+              2357,
+              2358,
+              2359,
+              2360,
+              2361,
+              2362,
+              2363,
+              2364,
+              2365
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              22,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0005444387206807733,
+              -5.628937651636079e-05,
+              -8.388546120841056e-06,
+              -2.1884823127038544e-06,
+              -3.4086742401123047,
+              -6.317430961644277e-05,
+              -9.513958502793685e-06,
+              -1.0319128036499023,
+              -1.3244972251413856e-05,
+              -0.00028020914760418236
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 1875,
+            "positions": [
+              1874
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.8266777992248535
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 2363,
+            "positions": [
+              2362
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.20196989178657532
+            ]
+          }
+        ]
+      },
+      "weight_only_next": {
+        "probe_sha256": "0c27dceddc7db65acf519ee8d8a09bf6fc3de5e3b8cbd01573a2636e8940149f",
+        "num_sequences": 4,
+        "input_tokens": 10103,
+        "num_supervised_tokens": 23,
+        "sequences": [
+          {
+            "task": "action",
+            "input_tokens": 3499,
+            "positions": [
+              3488,
+              3489,
+              3490,
+              3491,
+              3492,
+              3493,
+              3494,
+              3495,
+              3496,
+              3497,
+              3498
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              16,
+              15,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.0004984305705875158,
+              -5.227063593338244e-05,
+              -5.149955086380942e-06,
+              -1.0949762554446352e-06,
+              -3.8955600261688232,
+              -0.00012214849994052202,
+              -2.9939095838926733e-05,
+              -0.8770140409469604,
+              -1.72264564037323,
+              -2.394634429947473e-05,
+              -0.00017198601562995464
+            ]
+          },
+          {
+            "task": "action",
+            "input_tokens": 2366,
+            "positions": [
+              2356,
+              2357,
+              2358,
+              2359,
+              2360,
+              2361,
+              2362,
+              2363,
+              2364,
+              2365
+            ],
+            "target_tokens": [
+              4754,
+              60947,
+              7681,
+              816,
+              763,
+              328,
+              32,
+              22,
+              8934,
+              248046
+            ],
+            "logprobs": [
+              -0.000625800050329417,
+              -5.747486648033373e-05,
+              -8.931381671573035e-06,
+              -2.764860937531921e-06,
+              -3.529777765274048,
+              -7.150026794988662e-05,
+              -1.0801672033267096e-05,
+              -1.0315603017807007,
+              -1.3797455721942242e-05,
+              -0.00029590382473543286
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 1875,
+            "positions": [
+              1874
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.8988503813743591
+            ]
+          },
+          {
+            "task": "belief",
+            "input_tokens": 2363,
+            "positions": [
+              2362
+            ],
+            "target_tokens": [
+              16
+            ],
+            "logprobs": [
+              -0.22601033747196198
+            ]
+          }
+        ]
+      }
+    },
+    "operations": [
+      {
+        "name": "load_state_with_optimizer",
+        "status": "succeeded"
+      },
+      {
+        "name": "reloaded_probe",
+        "status": "succeeded"
+      },
+      {
+        "name": "original_diagnostic_update",
+        "status": "succeeded"
+      },
+      {
+        "name": "original_next_probe",
+        "status": "succeeded"
+      },
+      {
+        "name": "restored_diagnostic_update",
+        "status": "succeeded"
+      },
+      {
+        "name": "restored_next_probe",
+        "status": "succeeded"
+      },
+      {
+        "name": "load_state_without_optimizer",
+        "status": "succeeded"
+      },
+      {
+        "name": "weight_only_diagnostic_update",
+        "status": "succeeded"
+      },
+      {
+        "name": "weight_only_next_probe",
+        "status": "succeeded"
+      }
+    ],
+    "diagnostic_optimizer_steps": {
+      "original": 1,
+      "restored": 1,
+      "weight_only": 1
+    },
+    "interpretation": "Finite validation probes must distinguish updated weights and restored optimizer state from unupdated/weight-only controls; this is not loss improvement, parameter equality proof or playing strength.",
+    "plan": {
+      "version": "trial_training_sampling_closure_v2",
+      "probe_forward_calls": 7,
+      "probe_forward_tokens": 70721,
+      "diagnostic_training_batches": 3,
+      "diagnostic_training_tokens": 326805,
+      "diagnostic_optimizer_steps": 3,
+      "state_reload_calls": 2,
+      "total_processed_tokens": 397526,
+      "sdk_calls": {
+        "forward": 7,
+        "forward_backward": 3,
+        "optim_step": 3,
+        "create_training_client_from_state_with_optimizer": 1,
+        "create_training_client_from_state": 1
+      },
+      "scope": "Three caller probes, one reloaded probe, three branch probes and updates; includes weight-only negative control; excludes sampler checks and checkpoint storage."
+    }
+  }
+}

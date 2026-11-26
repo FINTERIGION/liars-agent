@@ -1,0 +1,697 @@
+{
+  "elapsed_sec": 1792.9,
+  "belief_validation": {
+    "heldout_diverse_12": {
+      "v3_flat_classifier": {
+        "n": 1486,
+        "bluff_rate": 0.3075,
+        "log_loss": 0.5632,
+        "brier": 0.1882,
+        "auc": 0.6799,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 261,
+            "log_loss": 0.5893,
+            "brier": 0.2005,
+            "auc": 0.6774
+          },
+          "R3-5": {
+            "n": 399,
+            "log_loss": 0.555,
+            "brier": 0.1853,
+            "auc": 0.7095
+          },
+          "R6+": {
+            "n": 826,
+            "log_loss": 0.5589,
+            "brier": 0.1857,
+            "auc": 0.6629
+          }
+        }
+      },
+      "v4_no_history_clf": {
+        "n": 1486,
+        "bluff_rate": 0.3075,
+        "log_loss": 0.562,
+        "brier": 0.1879,
+        "auc": 0.6767,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 261,
+            "log_loss": 0.595,
+            "brier": 0.2025,
+            "auc": 0.6572
+          },
+          "R3-5": {
+            "n": 399,
+            "log_loss": 0.5644,
+            "brier": 0.1893,
+            "auc": 0.6871
+          },
+          "R6+": {
+            "n": 826,
+            "log_loss": 0.5503,
+            "brier": 0.1825,
+            "auc": 0.6735
+          }
+        }
+      },
+      "v4_count_history_clf": {
+        "n": 1486,
+        "bluff_rate": 0.3075,
+        "log_loss": 0.5415,
+        "brier": 0.1797,
+        "auc": 0.7176,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 261,
+            "log_loss": 0.5874,
+            "brier": 0.1994,
+            "auc": 0.6652
+          },
+          "R3-5": {
+            "n": 399,
+            "log_loss": 0.5405,
+            "brier": 0.1792,
+            "auc": 0.7243
+          },
+          "R6+": {
+            "n": 826,
+            "log_loss": 0.5274,
+            "brier": 0.1737,
+            "auc": 0.7288
+          }
+        }
+      },
+      "v4_exact_bayes_zero_fit": {
+        "n": 1486,
+        "bluff_rate": 0.3075,
+        "log_loss": 0.5616,
+        "brier": 0.188,
+        "auc": 0.6979,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 261,
+            "log_loss": 0.6025,
+            "brier": 0.207,
+            "auc": 0.6436
+          },
+          "R3-5": {
+            "n": 399,
+            "log_loss": 0.5589,
+            "brier": 0.1853,
+            "auc": 0.716
+          },
+          "R6+": {
+            "n": 826,
+            "log_loss": 0.55,
+            "brier": 0.1833,
+            "auc": 0.7017
+          }
+        }
+      },
+      "v4_calibrated_posterior": {
+        "n": 1486,
+        "bluff_rate": 0.3075,
+        "log_loss": 0.5384,
+        "brier": 0.1788,
+        "auc": 0.7231,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 261,
+            "log_loss": 0.5885,
+            "brier": 0.2003,
+            "auc": 0.667
+          },
+          "R3-5": {
+            "n": 399,
+            "log_loss": 0.5346,
+            "brier": 0.1765,
+            "auc": 0.7274
+          },
+          "R6+": {
+            "n": 826,
+            "log_loss": 0.5244,
+            "brier": 0.1732,
+            "auc": 0.7346
+          }
+        }
+      }
+    },
+    "unseen_mirror_tell": {
+      "v3_flat_classifier": {
+        "n": 2326,
+        "bluff_rate": 0.3495,
+        "log_loss": 0.6682,
+        "brier": 0.2343,
+        "auc": 0.572,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 348,
+            "log_loss": 0.6351,
+            "brier": 0.2205,
+            "auc": 0.5067
+          },
+          "R3-5": {
+            "n": 517,
+            "log_loss": 0.6165,
+            "brier": 0.2117,
+            "auc": 0.5463
+          },
+          "R6+": {
+            "n": 1461,
+            "log_loss": 0.6944,
+            "brier": 0.2456,
+            "auc": 0.6019
+          }
+        }
+      },
+      "v4_no_history_clf": {
+        "n": 2326,
+        "bluff_rate": 0.3495,
+        "log_loss": 0.6437,
+        "brier": 0.2251,
+        "auc": 0.6343,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 348,
+            "log_loss": 0.627,
+            "brier": 0.2164,
+            "auc": 0.529
+          },
+          "R3-5": {
+            "n": 517,
+            "log_loss": 0.6089,
+            "brier": 0.2083,
+            "auc": 0.5539
+          },
+          "R6+": {
+            "n": 1461,
+            "log_loss": 0.66,
+            "brier": 0.2331,
+            "auc": 0.6719
+          }
+        }
+      },
+      "v4_count_history_clf": {
+        "n": 2326,
+        "bluff_rate": 0.3495,
+        "log_loss": 0.6057,
+        "brier": 0.2079,
+        "auc": 0.6902,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 348,
+            "log_loss": 0.6237,
+            "brier": 0.2152,
+            "auc": 0.5579
+          },
+          "R3-5": {
+            "n": 517,
+            "log_loss": 0.5669,
+            "brier": 0.1911,
+            "auc": 0.6837
+          },
+          "R6+": {
+            "n": 1461,
+            "log_loss": 0.6152,
+            "brier": 0.2121,
+            "auc": 0.7196
+          }
+        }
+      },
+      "v4_exact_bayes_zero_fit": {
+        "n": 2326,
+        "bluff_rate": 0.3495,
+        "log_loss": 0.5574,
+        "brier": 0.1908,
+        "auc": 0.7375,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 348,
+            "log_loss": 0.6219,
+            "brier": 0.2159,
+            "auc": 0.5488
+          },
+          "R3-5": {
+            "n": 517,
+            "log_loss": 0.5152,
+            "brier": 0.1691,
+            "auc": 0.7673
+          },
+          "R6+": {
+            "n": 1461,
+            "log_loss": 0.5569,
+            "brier": 0.1925,
+            "auc": 0.7666
+          }
+        }
+      },
+      "v4_calibrated_posterior": {
+        "n": 2326,
+        "bluff_rate": 0.3495,
+        "log_loss": 0.5761,
+        "brier": 0.1976,
+        "auc": 0.7385,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 348,
+            "log_loss": 0.6194,
+            "brier": 0.2132,
+            "auc": 0.5522
+          },
+          "R3-5": {
+            "n": 517,
+            "log_loss": 0.5375,
+            "brier": 0.1794,
+            "auc": 0.7403
+          },
+          "R6+": {
+            "n": 1461,
+            "log_loss": 0.5794,
+            "brier": 0.2002,
+            "auc": 0.7772
+          }
+        }
+      }
+    },
+    "unseen_midgame_switcher": {
+      "v3_flat_classifier": {
+        "n": 2190,
+        "bluff_rate": 0.3178,
+        "log_loss": 0.6192,
+        "brier": 0.2136,
+        "auc": 0.6052,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 355,
+            "log_loss": 0.5621,
+            "brier": 0.188,
+            "auc": 0.5985
+          },
+          "R3-5": {
+            "n": 506,
+            "log_loss": 0.5999,
+            "brier": 0.2047,
+            "auc": 0.5906
+          },
+          "R6+": {
+            "n": 1329,
+            "log_loss": 0.6418,
+            "brier": 0.2239,
+            "auc": 0.6257
+          }
+        }
+      },
+      "v4_no_history_clf": {
+        "n": 2190,
+        "bluff_rate": 0.3178,
+        "log_loss": 0.59,
+        "brier": 0.2013,
+        "auc": 0.6736,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 355,
+            "log_loss": 0.5516,
+            "brier": 0.1832,
+            "auc": 0.6117
+          },
+          "R3-5": {
+            "n": 506,
+            "log_loss": 0.5797,
+            "brier": 0.1956,
+            "auc": 0.621
+          },
+          "R6+": {
+            "n": 1329,
+            "log_loss": 0.6041,
+            "brier": 0.2083,
+            "auc": 0.7043
+          }
+        }
+      },
+      "v4_count_history_clf": {
+        "n": 2190,
+        "bluff_rate": 0.3178,
+        "log_loss": 0.5866,
+        "brier": 0.1997,
+        "auc": 0.6782,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 355,
+            "log_loss": 0.5564,
+            "brier": 0.1855,
+            "auc": 0.6034
+          },
+          "R3-5": {
+            "n": 506,
+            "log_loss": 0.5844,
+            "brier": 0.1979,
+            "auc": 0.6305
+          },
+          "R6+": {
+            "n": 1329,
+            "log_loss": 0.5955,
+            "brier": 0.2042,
+            "auc": 0.7109
+          }
+        }
+      },
+      "v4_exact_bayes_zero_fit": {
+        "n": 2190,
+        "bluff_rate": 0.3178,
+        "log_loss": 0.577,
+        "brier": 0.1974,
+        "auc": 0.695,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 355,
+            "log_loss": 0.5729,
+            "brier": 0.1928,
+            "auc": 0.6557
+          },
+          "R3-5": {
+            "n": 506,
+            "log_loss": 0.5987,
+            "brier": 0.2043,
+            "auc": 0.6635
+          },
+          "R6+": {
+            "n": 1329,
+            "log_loss": 0.5698,
+            "brier": 0.1959,
+            "auc": 0.7246
+          }
+        }
+      },
+      "v4_calibrated_posterior": {
+        "n": 2190,
+        "bluff_rate": 0.3178,
+        "log_loss": 0.574,
+        "brier": 0.1953,
+        "auc": 0.7071,
+        "by_round_bucket": {
+          "R1-2": {
+            "n": 355,
+            "log_loss": 0.5506,
+            "brier": 0.1833,
+            "auc": 0.631
+          },
+          "R3-5": {
+            "n": 506,
+            "log_loss": 0.5912,
+            "brier": 0.2,
+            "auc": 0.6325
+          },
+          "R6+": {
+            "n": 1329,
+            "log_loss": 0.5737,
+            "brier": 0.1967,
+            "auc": 0.7536
+          }
+        }
+      }
+    }
+  },
+  "counterfactual_teacher_sensitivity": {
+    "num_pairs": 12,
+    "v2_teacher": {
+      "mean_abs_dq_challenge": 0.0305,
+      "mean_aligned_dq_challenge": 0.0237,
+      "best_action_flip_rate": 0.1667,
+      "flips": 2
+    },
+    "v4_posterior_teacher": {
+      "mean_abs_dq_challenge": 0.281,
+      "mean_aligned_dq_challenge": 0.281,
+      "best_action_flip_rate": 0.75,
+      "flips": 9
+    },
+    "sample_prompt_summary": "各座位公开历史统计（按声称张数分桶）:\n  - Seat 0: 尚无公开历史\n  - Seat 1: 出牌(1张:2次, 2~3张:4次) | 亮牌(1张:2诈/2亮, 2~3张:0诈/3亮) | 主动质疑:0次\n  - Seat 2: 尚无公开历史\n  - Seat 3: 尚无公开历史",
+    "pairs": [
+      {
+        "scenario_idx": 0,
+        "claimed_count": 2,
+        "shots": 0,
+        "v2_q_ch_A": 0.6719,
+        "v2_q_ch_B": 0.6719,
+        "v4_q_ch_A": 0.35,
+        "v4_q_ch_B": 0.7125,
+        "v2_flipped": false,
+        "v4_flipped": true,
+        "v4_p_bluff_A": 0.0272,
+        "v4_p_bluff_B": 0.9165
+      },
+      {
+        "scenario_idx": 1,
+        "claimed_count": 2,
+        "shots": 2,
+        "v2_q_ch_A": 0.4875,
+        "v2_q_ch_B": 0.4875,
+        "v4_q_ch_A": 0.4688,
+        "v4_q_ch_B": 0.7094,
+        "v2_flipped": false,
+        "v4_flipped": true,
+        "v4_p_bluff_A": 0.0272,
+        "v4_p_bluff_B": 0.9165
+      },
+      {
+        "scenario_idx": 2,
+        "claimed_count": 2,
+        "shots": 1,
+        "v2_q_ch_A": 0.3187,
+        "v2_q_ch_B": 0.3594,
+        "v4_q_ch_A": 0.4281,
+        "v4_q_ch_B": 0.5813,
+        "v2_flipped": false,
+        "v4_flipped": false,
+        "v4_p_bluff_A": 0.0246,
+        "v4_p_bluff_B": 0.903
+      },
+      {
+        "scenario_idx": 3,
+        "claimed_count": 2,
+        "shots": 1,
+        "v2_q_ch_A": 0.4906,
+        "v2_q_ch_B": 0.5719,
+        "v4_q_ch_A": 0.2875,
+        "v4_q_ch_B": 0.525,
+        "v2_flipped": true,
+        "v4_flipped": true,
+        "v4_p_bluff_A": 0.0332,
+        "v4_p_bluff_B": 0.9325
+      },
+      {
+        "scenario_idx": 4,
+        "claimed_count": 3,
+        "shots": 1,
+        "v2_q_ch_A": 0.6125,
+        "v2_q_ch_B": 0.6125,
+        "v4_q_ch_A": 0.5531,
+        "v4_q_ch_B": 0.7937,
+        "v2_flipped": false,
+        "v4_flipped": true,
+        "v4_p_bluff_A": 0.0718,
+        "v4_p_bluff_B": 0.9644
+      },
+      {
+        "scenario_idx": 5,
+        "claimed_count": 3,
+        "shots": 2,
+        "v2_q_ch_A": 0.4469,
+        "v2_q_ch_B": 0.4469,
+        "v4_q_ch_A": 0.4719,
+        "v4_q_ch_B": 0.6906,
+        "v2_flipped": false,
+        "v4_flipped": true,
+        "v4_p_bluff_A": 0.0482,
+        "v4_p_bluff_B": 0.9489
+      },
+      {
+        "scenario_idx": 6,
+        "claimed_count": 1,
+        "shots": 0,
+        "v2_q_ch_A": 0.4219,
+        "v2_q_ch_B": 0.4219,
+        "v4_q_ch_A": 0.7281,
+        "v4_q_ch_B": 0.3875,
+        "v2_flipped": false,
+        "v4_flipped": true,
+        "v4_p_bluff_A": 0.8477,
+        "v4_p_bluff_B": 0.0241
+      },
+      {
+        "scenario_idx": 7,
+        "claimed_count": 1,
+        "shots": 1,
+        "v2_q_ch_A": 0.2531,
+        "v2_q_ch_B": 0.2938,
+        "v4_q_ch_A": 0.7062,
+        "v4_q_ch_B": 0.2844,
+        "v2_flipped": false,
+        "v4_flipped": false,
+        "v4_p_bluff_A": 0.8441,
+        "v4_p_bluff_B": 0.0237
+      },
+      {
+        "scenario_idx": 8,
+        "claimed_count": 1,
+        "shots": 2,
+        "v2_q_ch_A": 0.4437,
+        "v2_q_ch_B": 0.3625,
+        "v4_q_ch_A": 0.5813,
+        "v4_q_ch_B": 0.3688,
+        "v2_flipped": true,
+        "v4_flipped": true,
+        "v4_p_bluff_A": 0.8545,
+        "v4_p_bluff_B": 0.0252
+      },
+      {
+        "scenario_idx": 9,
+        "claimed_count": 2,
+        "shots": 1,
+        "v2_q_ch_A": 0.5687,
+        "v2_q_ch_B": 0.5687,
+        "v4_q_ch_A": 0.3656,
+        "v4_q_ch_B": 0.7688,
+        "v2_flipped": false,
+        "v4_flipped": false,
+        "v4_p_bluff_A": 0.0272,
+        "v4_p_bluff_B": 0.9165
+      },
+      {
+        "scenario_idx": 10,
+        "claimed_count": 2,
+        "shots": 0,
+        "v2_q_ch_A": 0.4844,
+        "v2_q_ch_B": 0.5656,
+        "v4_q_ch_A": 0.4281,
+        "v4_q_ch_B": 0.8156,
+        "v2_flipped": false,
+        "v4_flipped": true,
+        "v4_p_bluff_A": 0.0246,
+        "v4_p_bluff_B": 0.903
+      },
+      {
+        "scenario_idx": 11,
+        "claimed_count": 1,
+        "shots": 1,
+        "v2_q_ch_A": 0.3563,
+        "v2_q_ch_B": 0.3156,
+        "v4_q_ch_A": 0.6031,
+        "v4_q_ch_B": 0.45,
+        "v2_flipped": false,
+        "v4_flipped": true,
+        "v4_p_bluff_A": 0.8477,
+        "v4_p_bluff_B": 0.0241
+      }
+    ]
+  },
+  "gameplay_paired_evaluation": {
+    "unseen_mirror_tell_pool": {
+      "rule_counter": {
+        "win_rate": 0.25,
+        "wins": 45,
+        "games": 180,
+        "challenge_hit_rate": 0.2465,
+        "challenges": 430,
+        "bluff_rate": 0.3702,
+        "caught_when_bluffing_rate": 0.2697
+      },
+      "v3_small_classifier": {
+        "win_rate": 0.4056,
+        "wins": 73,
+        "games": 180,
+        "challenge_hit_rate": 0.2703,
+        "challenges": 74,
+        "bluff_rate": 0.2474,
+        "caught_when_bluffing_rate": 0.4515
+      },
+      "v4_posterior_no_history": {
+        "win_rate": 0.7556,
+        "wins": 136,
+        "games": 180,
+        "challenge_hit_rate": 0.5743,
+        "challenges": 148,
+        "bluff_rate": 0.2329,
+        "caught_when_bluffing_rate": 0.2652
+      },
+      "v4_posterior_full_history": {
+        "win_rate": 0.7833,
+        "wins": 141,
+        "games": 180,
+        "challenge_hit_rate": 0.6571,
+        "challenges": 70,
+        "bluff_rate": 0.2641,
+        "caught_when_bluffing_rate": 0.2857
+      }
+    },
+    "diverse_13_pool": {
+      "rule_counter": {
+        "win_rate": 0.25,
+        "wins": 45,
+        "games": 180,
+        "challenge_hit_rate": 0.434,
+        "challenges": 606,
+        "bluff_rate": 0.3703,
+        "caught_when_bluffing_rate": 0.237
+      },
+      "v3_small_classifier": {
+        "win_rate": 0.4778,
+        "wins": 86,
+        "games": 180,
+        "challenge_hit_rate": 0.7111,
+        "challenges": 135,
+        "bluff_rate": 0.2287,
+        "caught_when_bluffing_rate": 0.5212
+      },
+      "v4_posterior_no_history": {
+        "win_rate": 0.7167,
+        "wins": 129,
+        "games": 180,
+        "challenge_hit_rate": 0.5782,
+        "challenges": 147,
+        "bluff_rate": 0.1872,
+        "caught_when_bluffing_rate": 0.4245
+      },
+      "v4_posterior_full_history": {
+        "win_rate": 0.7667,
+        "wins": 138,
+        "games": 180,
+        "challenge_hit_rate": 0.6413,
+        "challenges": 92,
+        "bluff_rate": 0.2039,
+        "caught_when_bluffing_rate": 0.4087
+      }
+    }
+  },
+  "direct_teacher_policy_eval": {
+    "v2_blind_teacher_policy": {
+      "win_rate": 0.6042,
+      "wins": 29,
+      "games": 48,
+      "challenge_hit_rate": 0.2471,
+      "challenges": 85,
+      "bluff_rate": 0.3481,
+      "caught_when_bluffing_rate": 0.1544
+    },
+    "v4_posterior_teacher_no_history": {
+      "win_rate": 0.7083,
+      "wins": 34,
+      "games": 48,
+      "challenge_hit_rate": 0.3333,
+      "challenges": 21,
+      "bluff_rate": 0.3845,
+      "caught_when_bluffing_rate": 0.1869
+    },
+    "v4_posterior_teacher_full_history": {
+      "win_rate": 0.8333,
+      "wins": 40,
+      "games": 48,
+      "challenge_hit_rate": 0.5,
+      "challenges": 18,
+      "bluff_rate": 0.4059,
+      "caught_when_bluffing_rate": 0.1159
+    }
+  }
+}
